@@ -1,0 +1,131 @@
+{
+  "title": "Hecate",
+  "uid": "hecate-overview",
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Repositories collected",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(max by (source) (hecate_repositories))", "legendFormat": "total" }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "By source",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max by (source) (hecate_repositories)", "legendFormat": "{{source}}" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Hours since last extraction",
+      "description": "Climbing steadily on every source means the scheduled job has stopped running.",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max by (source) (hecate_last_extraction_age_seconds) / 3600",
+          "legendFormat": "{{source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 26 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Exporter pods up",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "count(up{job=\"hecate-pods\"} == 1)", "legendFormat": "up" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Errors per second",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (type) (rate(hecate_errors_total[5m]))", "legendFormat": "{{type}}" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Load latency",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(hecate_load_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(hecate_load_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(hecate_load_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "type": "barchart",
+      "title": "Repositories by language",
+      "description": "From the dbt marts. Only GitHub and PyPI report a language, so this is those two.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT language_display AS language, repository_count FROM analytics_marts.dim_languages ORDER BY repository_count DESC, language LIMIT 15"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Most starred",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT name, language, stars, stars_per_fork, days_since_update FROM analytics_marts.fct_repositories WHERE stars > 0 ORDER BY stars DESC LIMIT 15"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Field coverage by source",
+      "description": "Which fields each source actually populates. Worth checking before comparing anything across them.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT source, repository_count, with_stars, with_downloads, with_language, with_created_at, avg_days_since_update FROM analytics_marts.dim_sources ORDER BY source"
+        }
+      ]
+    }
+  ]
+}
