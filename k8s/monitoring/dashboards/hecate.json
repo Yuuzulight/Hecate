@@ -2,48 +2,85 @@
   "title": "Hecate",
   "uid": "hecate-overview",
   "timezone": "browser",
-  "refresh": "15s",
-  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "name": "Extraction runs",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "iconColor": "green",
+        "expr": "resets(hecate_last_extraction_age_seconds{source=\"github\"}[5m]) > 0",
+        "titleFormat": "extraction run"
+      }
+    ]
+  },
   "panels": [
     {
       "type": "stat",
       "title": "Repositories collected",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "description": "Current total across all sources. Not affected by the time range.",
+      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "sum(max by (source) (hecate_repositories))", "legendFormat": "total" }
-      ]
+      ],
+      "options": { "colorMode": "none", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        }
+      }
     },
     {
-      "type": "piechart",
+      "type": "barchart",
       "title": "By source",
-      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        { "expr": "max by (source) (hecate_repositories)", "legendFormat": "{{source}}" }
-      ]
-    },
-    {
-      "type": "stat",
-      "title": "Hours since last extraction",
-      "description": "Climbing steadily on every source means the scheduled job has stopped running.",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "description": "Current row counts. Four similar magnitudes, so bars rather than a pie.",
+      "gridPos": { "h": 4, "w": 7, "x": 5, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "max by (source) (hecate_last_extraction_age_seconds) / 3600",
-          "legendFormat": "{{source}}"
+          "expr": "max by (source) (hecate_repositories)",
+          "legendFormat": "{{source}}",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "legend": { "showLegend": false },
+        "xTickLabelRotation": 0
+      },
+      "fieldConfig": { "defaults": { "noValue": "0" } }
+    },
+    {
+      "type": "stat",
+      "title": "Data quality",
+      "description": "Share of stored rows passing the same checks the pipeline runs: an http url, a creation date that isn't in the future, and a non-negative star count. Computed from the data rather than from run counters, which live and die with the job pod.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT round(100.0 * count(*) FILTER (WHERE url LIKE 'http%' AND (created_at IS NULL OR created_at <= now()) AND stars >= 0) / NULLIF(count(*), 0), 1) AS pass_rate FROM analytics_marts.fct_repositories"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "h",
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "no data yet",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 26 },
-              { "color": "red", "value": 50 }
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 95 },
+              { "color": "green", "value": 99.5 }
             ]
           }
         }
@@ -51,81 +88,202 @@
     },
     {
       "type": "stat",
-      "title": "Exporter pods up",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "title": "Exporter pods",
+      "description": "Autoscales between 2 and 5. Two is the healthy floor, not a scaled-down failure.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "expr": "count(up{job=\"hecate-pods\"} == 1)", "legendFormat": "up" }]
+      "targets": [{ "expr": "count(up{job=\"hecate-pods\"} == 1)", "legendFormat": "running" }],
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "min": 0,
+          "max": 5,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 2 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Hours since last extraction",
+      "description": "The one panel here that constitutes alerting. Climbing on every source at once means the scheduled job has stopped running, which fails silently otherwise.",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "max by (source) (hecate_last_extraction_age_seconds) / 3600",
+          "legendFormat": "{{source}}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "minVizWidth": 40,
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "decimals": 1,
+          "min": 0,
+          "max": 48,
+          "noValue": "never",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 26 },
+              { "color": "red", "value": 48 }
+            ]
+          }
+        }
+      }
     },
     {
       "type": "timeseries",
       "title": "Errors per second",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "description": "From the metrics exporter. The extraction job's own counters exit with its pod, so a quiet line here means the exporter is healthy, not that nothing ever fails.",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "sum by (type) (rate(hecate_errors_total[5m]))", "legendFormat": "{{type}}" }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Load latency",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.5, sum(rate(hecate_load_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p50"
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(hecate_load_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p95"
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(hecate_load_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p99"
-        }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" } }
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "min": 0,
+          "custom": { "fillOpacity": 10, "showPoints": "never" }
+        }
+      }
     },
     {
-      "type": "barchart",
-      "title": "Repositories by language",
-      "description": "From the dbt marts. Only GitHub and PyPI report a language, so this is those two.",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 16 },
+      "type": "table",
+      "title": "Popular but going stale",
+      "description": "High star count, no activity in six months. The question the project exists to answer. Empty is a good result on a small sample of top repositories.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 11 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
       "targets": [
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT language_display AS language, repository_count FROM analytics_marts.dim_languages ORDER BY repository_count DESC, language LIMIT 15"
+          "rawSql": "SELECT name, language, stars, days_since_update AS days_stale FROM analytics_marts.fct_repositories WHERE stars > 5000 AND days_since_update > 180 ORDER BY days_since_update DESC LIMIT 12"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 110 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "name" },
+            "properties": [{ "id": "custom.width", "value": 230 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "days_stale" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "orange", "value": null },
+                    { "color": "red", "value": 730 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "type": "table",
       "title": "Most starred",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 16 },
+      "description": "Current snapshot from the marts. Not affected by the time range.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 11 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
       "targets": [
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT name, language, stars, stars_per_fork, days_since_update FROM analytics_marts.fct_repositories WHERE stars > 0 ORDER BY stars DESC LIMIT 15"
+          "rawSql": "SELECT name, language, stars, stars_per_fork FROM analytics_marts.fct_repositories WHERE stars > 0 ORDER BY stars DESC LIMIT 12"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 120 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "name" },
+            "properties": [{ "id": "custom.width", "value": 240 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "stars_per_fork" },
+            "properties": [{ "id": "decimals", "value": 1 }, { "id": "custom.width", "value": 130 }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "barchart",
+      "title": "Top languages",
+      "description": "Current snapshot. Only GitHub and PyPI report a language, so this covers those two.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT language_display AS language, repository_count FROM analytics_marts.dim_languages ORDER BY repository_count DESC, language LIMIT 10"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "legend": { "showLegend": false },
+        "xTickLabelRotation": 0
+      },
+      "fieldConfig": { "defaults": { "noValue": "0" } }
     },
     {
       "type": "table",
       "title": "Field coverage by source",
-      "description": "Which fields each source actually populates. Worth checking before comparing anything across them.",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+      "description": "Which fields each source actually populates. Check this before comparing anything across sources - npm reports no stars, GitHub and GitLab report no downloads, and averaging across them gives a number that means nothing.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 20 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
       "targets": [
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT source, repository_count, with_stars, with_downloads, with_language, with_created_at, avg_days_since_update FROM analytics_marts.dim_sources ORDER BY source"
+          "rawSql": "SELECT source, repository_count AS rows, with_stars, with_downloads, with_language, round(avg_days_since_update) AS avg_days_stale FROM analytics_marts.dim_sources ORDER BY source"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 105 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "with_.*" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "text", "value": null },
+                    { "color": "green", "value": 1 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }
