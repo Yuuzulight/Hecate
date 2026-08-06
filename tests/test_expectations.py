@@ -42,13 +42,21 @@ def test_a_clean_batch_reports_no_failures(expectations):
         ("url_is_http", dict(GOOD, url="ftp://example.com")),
         ("source_known", dict(GOOD, source="bitbucket")),
         ("stars_in_range", dict(GOOD, stars=-1)),
-        ("stars_in_range", dict(GOOD, stars=99_000_000)),
+        ("stars_in_range", dict(GOOD, stars=500_000_000)),
+        ("stars_in_range", dict(GOOD, stars=True)),
+        ("forks_in_range", dict(GOOD, forks="12")),
         ("forks_in_range", dict(GOOD, forks=-5)),
         ("extracted_at_present", dict(GOOD, extracted_at=None)),
     ],
 )
 def test_each_check_catches_its_own_bad_case(expectations, check, row):
     assert expectations.validate([row])["failures"].get(check) == 1
+
+
+def test_a_real_star_count_is_not_flagged(expectations):
+    # - The ceiling exists to catch nonsense, not to disagree with GitHub. The
+    #   most starred repository is already past half a million.
+    assert expectations.validate([dict(GOOD, stars=900_000)])["failures"] == {}
 
 
 def test_a_creation_date_in_the_future_is_caught(expectations):

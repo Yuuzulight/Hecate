@@ -44,10 +44,6 @@ def run(config: Config) -> tuple[int, list[str]]:
                 records = extractor.extract()
                 rows = transformer.transform_all(records, extractor.source)
                 loaded += loader.load_repositories(rows)
-                # - Reports on what landed. Deliberately does not gate the run:
-                #   suspect data is worth looking at, not worth discarding a
-                #   day's collection over.
-                expectations.validate(rows)
             except Exception as exc:
                 # - Broad on purpose. An unexpected shape coming back from one
                 #   registry should cost that source, not the other three, and a
@@ -56,6 +52,18 @@ def run(config: Config) -> tuple[int, list[str]]:
                 failed.append(extractor.source)
                 log.exception(
                     "source failed",
+                    extra={"context": {"source": extractor.source, "error": str(exc)}},
+                )
+                continue
+
+            # - Outside the block above on purpose. The rows are in the database
+            #   by this point, so a problem reporting on them is not a reason to
+            #   call the source failed.
+            try:
+                expectations.validate(loader.rows_for(extractor.source))
+            except Exception as exc:
+                log.exception(
+                    "quality check could not run",
                     extra={"context": {"source": extractor.source, "error": str(exc)}},
                 )
     finally:

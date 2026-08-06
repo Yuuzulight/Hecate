@@ -19,43 +19,37 @@ from datetime import datetime, timedelta, timezone
 
 from pipeline import metrics
 from pipeline.logger import get_logger
+from pipeline.transformer import parse_timestamp
 
-MAX_COUNT = 1_000_000
+# - A ceiling for catching nonsense, not a prediction. The most starred
+#   repository is already past half a million, so anything close to real
+#   figures would start failing on good data instead of bad.
+MAX_COUNT = 100_000_000
 SOURCES = ("github", "npm", "pypi", "gitlab")
 # - Anything older suggests the scheduled run has stopped happening.
 STALE_AFTER = timedelta(hours=48)
 
 
-def _parsed(value) -> datetime | None:
-    if isinstance(value, datetime):
-        return value
-    try:
-        return datetime.fromisoformat(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _aware(when: datetime) -> datetime:
-    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
-
-
 def _in_range(value) -> bool:
-    return isinstance(value, int) and 0 <= value <= MAX_COUNT
+    # - bool is a subclass of int, so True would otherwise pass as a count of 1.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    return 0 <= value <= MAX_COUNT
 
 
 def _not_future(value) -> bool:
-    parsed = _parsed(value)
+    parsed = parse_timestamp(value)
     if parsed is None:
         # - Absent is allowed; npm reports no creation date at all.
         return value in (None, "")
-    return _aware(parsed) <= datetime.now(timezone.utc)
+    return parsed <= datetime.now(timezone.utc)
 
 
 def _recent(value) -> bool:
-    parsed = _parsed(value)
+    parsed = parse_timestamp(value)
     if parsed is None:
         return False
-    return datetime.now(timezone.utc) - _aware(parsed) <= STALE_AFTER
+    return datetime.now(timezone.utc) - parsed <= STALE_AFTER
 
 
 # - Each check is a name and a predicate over one row. Order is the order they

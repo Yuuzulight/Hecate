@@ -167,6 +167,28 @@ def test_a_source_without_downloads_stores_null_not_zero(loader):
     assert query(loader, "SELECT downloads FROM raw_repositories")[0][0] is None
 
 
+def test_rows_come_back_shaped_the_way_they_went_in(loader):
+    # - The quality checks read this back rather than trusting the batch that
+    #   was sent, so the round trip has to preserve column order and values.
+    loader.load_repositories([dict(ROW, id="npm_x", source="npm", downloads=12345)])
+    (row,) = loader.rows_for("npm")
+    assert row["id"] == "npm_x"
+    assert row["source"] == "npm"
+    assert row["stars"] == ROW["stars"]
+    assert row["downloads"] == 12345
+    assert row["url"] == ROW["url"]
+
+
+def test_rows_for_only_returns_the_source_asked_for(loader):
+    loader.load_repositories([ROW, dict(ROW, id="npm_y", source="npm")])
+    assert [r["id"] for r in loader.rows_for("npm")] == ["npm_y"]
+    assert [r["id"] for r in loader.rows_for("github")] == ["github_1"]
+
+
+def test_rows_for_an_absent_source_is_empty(loader):
+    assert loader.rows_for("gitlab") == []
+
+
 def test_these_tests_do_not_touch_the_real_table(loader):
     # - The guard for the whole file: if search_path ever stops pointing at the
     #   test schema, this fails before anything gets truncated for real.

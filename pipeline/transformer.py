@@ -21,8 +21,12 @@ SOURCES = ("github", "npm", "pypi", "gitlab")
 REQUIRED = ("id", "source", "name", "url", "extracted_at")
 
 
-def _timestamp(value) -> str | None:
-    """Return an ISO-8601 UTC string, or None if there's nothing usable."""
+def parse_timestamp(value) -> datetime | None:
+    """Parse a timestamp from any source into an aware datetime, or None.
+
+    Shared with the quality checks, which need the datetime rather than the
+    string. Two copies of this drifted apart once already.
+    """
     if not value:
         return None
     if isinstance(value, datetime):
@@ -30,14 +34,20 @@ def _timestamp(value) -> str | None:
     else:
         try:
             parsed = datetime.fromisoformat(str(value).strip())
-        except ValueError:
+        except (TypeError, ValueError):
             return None
     # - Naive timestamps come back from a few of the registries. Treating them
     #   as UTC is a guess, but a consistent one, and better than mixing aware
     #   and naive values in the same column.
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
+    return parsed.astimezone(timezone.utc)
+
+
+def _timestamp(value) -> str | None:
+    """Return an ISO-8601 UTC string, or None if there's nothing usable."""
+    parsed = parse_timestamp(value)
+    return None if parsed is None else parsed.isoformat()
 
 
 def _count(value) -> int:

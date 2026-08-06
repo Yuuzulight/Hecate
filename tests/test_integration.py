@@ -162,6 +162,35 @@ def test_an_unexpected_error_costs_one_source_not_the_run(config, loader, monkey
     assert failed == ["github"]
 
 
+def test_quality_checks_run_against_what_is_stored_not_what_was_sent(config, loader, monkeypatch):
+    # - Reading back is the whole point: a loader that dropped or mangled a row
+    #   would otherwise be invisible, because the batch in memory still looks
+    #   perfect.
+    use(monkeypatch, fake_extractor("github", [RAW]))
+    loader.rows_for.return_value = [dict(RAW, id="github_stored")]
+
+    seen = {}
+    monkeypatch.setattr(
+        main_module.RepositoryExpectations, "validate",
+        lambda self, rows: seen.update(rows=rows) or {},
+    )
+    run(config)
+
+    loader.rows_for.assert_called_once_with("github")
+    assert seen["rows"][0]["id"] == "github_stored"
+
+
+def test_a_broken_quality_check_does_not_fail_a_source_whose_rows_landed(config, loader, monkeypatch):
+    use(monkeypatch, fake_extractor("github", [RAW]))
+    loader.rows_for.side_effect = RuntimeError("cannot read back")
+
+    loaded, failed = run(config)
+    # - The rows are in the database. Failing to report on them is not the same
+    #   as failing to collect them.
+    assert loaded == 1
+    assert failed == []
+
+
 def test_an_empty_source_is_not_a_failure(config, loader, monkeypatch):
     use(monkeypatch, fake_extractor("github", []))
     loaded, failed = run(config)

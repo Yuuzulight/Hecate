@@ -15,7 +15,7 @@ from pipeline.exceptions import ConfigError
 load_dotenv()
 
 
-def _int(name: str, default: int, minimum: int = 1) -> int:
+def _int(name: str, default: int, minimum: int = 1, maximum: int | None = None) -> int:
     """Read an integer setting, falling back to default when it isn't set."""
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -26,6 +26,8 @@ def _int(name: str, default: int, minimum: int = 1) -> int:
         raise ConfigError(f"{name} must be an integer, got {raw!r}") from None
     if value < minimum:
         raise ConfigError(f"{name} must be at least {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise ConfigError(f"{name} must be at most {maximum}, got {value}")
     return value
 
 
@@ -45,7 +47,7 @@ class Config:
 
     def __init__(self) -> None:
         self.db_host = _optional("DB_HOST", "localhost")
-        self.db_port = _int("DB_PORT", 5432)
+        self.db_port = _int("DB_PORT", 5432, maximum=65535)
         self.db_user = _optional("DB_USER", "dataflow")
         self.db_password = _required("DB_PASSWORD")
         self.db_name = _optional("DB_NAME", "hecate")
@@ -58,8 +60,10 @@ class Config:
         self.npm_registry = _optional("NPM_REGISTRY", "https://registry.npmjs.org")
         self.pypi_registry = _optional("PYPI_REGISTRY", "https://pypi.org")
 
-        self.batch_size = _int("BATCH_SIZE", 100)
-        self.retry_attempts = _int("RETRY_ATTEMPTS", 3)
+        # - Bounded at both ends. A stray zero turns a polite run into four
+        #   APIs being hammered, and nothing here needs a batch that large.
+        self.batch_size = _int("BATCH_SIZE", 100, maximum=10_000)
+        self.retry_attempts = _int("RETRY_ATTEMPTS", 3, maximum=10)
 
     def __repr__(self) -> str:
         # - Never let the password reach a log line or a traceback.

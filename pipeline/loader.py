@@ -113,6 +113,21 @@ class PostgreSQLLoader:
         self.log.info("loaded", extra={"context": {"rows": len(values)}})
         return len(values)
 
+    def rows_for(self, source: str) -> list[dict]:
+        """Read back what is stored for one source.
+
+        The quality checks run on this rather than on the batch that was sent,
+        so a column mapped to the wrong place, a value truncated on the way in,
+        or a batch that never committed shows up as bad data instead of being
+        invisible.
+        """
+        columns = ", ".join(COLUMNS)
+        with self.transaction() as cur:
+            cur.execute(
+                f"SELECT {columns} FROM raw_repositories WHERE source = %s", (source,)
+            )
+            return [dict(zip(COLUMNS, row)) for row in cur.fetchall()]
+
     def close(self) -> None:
         if self.conn is not None:
             self.conn.close()
