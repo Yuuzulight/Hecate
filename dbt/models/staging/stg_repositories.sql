@@ -36,6 +36,22 @@ select
     --   the raw value.
     nullif(lower(trim(language)), '') as language_normalized,
 
+    open_issues_and_prs,
+    is_fork,
+
+    -- - An archived project is abandoned by declaration rather than by
+    --   inference, which is a stronger statement than any staleness figure.
+    coalesce(archived, false) as archived,
+    -- - The staleness expression is repeated rather than referenced, because
+    --   a column alias is not visible to its own select list.
+    case
+        when archived then 'archived'
+        when date_part('day', now() - updated_at) > 365 then 'stale'
+        when date_part('day', now() - updated_at) > 180 then 'quiet'
+        when updated_at is null then null
+        else 'active'
+    end as maintenance_status,
+
     created_at,
     updated_at,
     extract(year from created_at)::int as creation_year,

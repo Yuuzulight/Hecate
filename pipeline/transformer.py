@@ -61,6 +61,15 @@ def _count(value) -> int:
     return max(count, 0)
 
 
+def _optional_count(value) -> int | None:
+    """Like _count, but absent stays absent rather than becoming zero."""
+    return None if value is None else _count(value)
+
+
+def _flag(value) -> bool | None:
+    return None if value is None else bool(value)
+
+
 def _text(value) -> str | None:
     if value is None:
         return None
@@ -93,6 +102,11 @@ class RepositoryTransformer:
             #   coerced to zero. GitHub reporting no downloads is not the same
             #   claim as a package nobody installs.
             "downloads": None if record.get("downloads") is None else _count(record.get("downloads")),
+            # - GitHub concepts. Null everywhere else, because "this source has
+            #   no such measure" is not the same claim as false or zero.
+            "open_issues_and_prs": _optional_count(record.get("open_issues_and_prs")),
+            "archived": _flag(record.get("archived")),
+            "is_fork": _flag(record.get("is_fork")),
             "extracted_at": _timestamp(record.get("extracted_at")),
         }
 

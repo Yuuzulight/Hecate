@@ -20,6 +20,12 @@ REPO = {
     "created_at": "2015-11-09T01:02:03Z",
     "updated_at": "2024-08-06T04:05:06Z",
     "pushed_at": "2024-07-01T09:00:00Z",
+    "open_issues_count": 1420,
+    "archived": False,
+    "fork": False,
+    # - A duplicate of stargazers_count in the search API. Present here so the
+    #   test below can prove it is not what gets stored.
+    "watchers_count": 185432,
     "description": "An open source machine learning framework",
 }
 
@@ -79,6 +85,30 @@ def test_fetch_maps_the_api_shape_to_the_standard_schema(config):
     assert row["updated_at"] == "2024-07-01T09:00:00Z"
     assert row["description"].startswith("An open source")
     assert row["extracted_at"].endswith("+00:00")
+
+
+def test_github_specific_fields_are_mapped(config):
+    extractor = GitHubExtractor(config)
+    stub_session(extractor, [FakeResponse({"items": [REPO]})])
+    row = extractor.fetch()[0]
+    assert row["open_issues_and_prs"] == 1420
+    assert row["archived"] is False
+    assert row["is_fork"] is False
+
+
+def test_watchers_count_is_not_stored_as_anything(config):
+    # - It is a duplicate of stargazers_count in the search API. Mapping it
+    #   would store the star count twice under two different names.
+    extractor = GitHubExtractor(config)
+    stub_session(extractor, [FakeResponse({"items": [dict(REPO, watchers_count=999999)]})])
+    row = extractor.fetch()[0]
+    assert 999999 not in row.values()
+
+
+def test_an_archived_repository_is_flagged(config):
+    extractor = GitHubExtractor(config)
+    stub_session(extractor, [FakeResponse({"items": [dict(REPO, archived=True)]})])
+    assert extractor.fetch()[0]["archived"] is True
 
 
 def test_updated_at_falls_back_when_there_is_no_push(config):

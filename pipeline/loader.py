@@ -19,7 +19,8 @@ from pipeline.logger import get_logger
 
 COLUMNS = (
     "id", "source", "name", "url", "stars", "forks", "language",
-    "created_at", "updated_at", "description", "downloads", "extracted_at",
+    "created_at", "updated_at", "description", "downloads",
+    "open_issues_and_prs", "archived", "is_fork", "extracted_at",
 )
 
 MENTION_COLUMNS = (
@@ -44,12 +45,23 @@ CREATE TABLE IF NOT EXISTS raw_repositories (
     updated_at TIMESTAMPTZ,
     description TEXT,
     downloads BIGINT,
+    -- - Named for what GitHub actually returns. open_issues_count includes
+    --   pull requests, and calling it open_issues would have every reader
+    --   assume a backlog figure that overstates itself on active projects.
+    open_issues_and_prs INTEGER,
+    -- - A formally archived project is definitively abandoned rather than
+    --   merely quiet, which no other column can express.
+    archived BOOLEAN,
+    is_fork BOOLEAN,
     extracted_at TIMESTAMPTZ NOT NULL,
     loaded_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- - For databases created before downloads existed.
+-- - For databases created before these columns existed.
 ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS downloads BIGINT;
+ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS open_issues_and_prs INTEGER;
+ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS archived BOOLEAN;
+ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS is_fork BOOLEAN;
 
 -- - Posts get their own table. Every row above is an artifact with an identity;
 --   a post is an event *about* one, which is a different grain. Putting them
@@ -96,6 +108,9 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at = EXCLUDED.updated_at,
     description = EXCLUDED.description,
     downloads = EXCLUDED.downloads,
+    open_issues_and_prs = EXCLUDED.open_issues_and_prs,
+    archived = EXCLUDED.archived,
+    is_fork = EXCLUDED.is_fork,
     extracted_at = EXCLUDED.extracted_at,
     loaded_at = NOW()
 """

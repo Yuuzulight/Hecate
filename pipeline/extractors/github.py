@@ -71,5 +71,17 @@ class GitHubExtractor(Extractor):
             #   pushed_at is the last actual commit, which is the question.
             "updated_at": raw.get("pushed_at") or raw.get("updated_at"),
             "description": raw.get("description"),
+            # - open_issues_count includes pull requests, which is why the
+            #   column says so. Treating it as a backlog overstates it, badly
+            #   on projects with a lot of PR traffic.
+            "open_issues_and_prs": raw.get("open_issues_count"),
+            "archived": raw.get("archived"),
+            "is_fork": raw.get("fork"),
+            # - Deliberately not watchers_count. In the search API that is a
+            #   duplicate of stargazers_count kept for backwards compatibility,
+            #   so mapping it would store the star count twice under two names.
+            #   The real figure is subscribers_count, which only appears on the
+            #   individual repository endpoint - one request per row, the trade
+            #   already refused for GitLab language.
             "extracted_at": self.now(),
         }

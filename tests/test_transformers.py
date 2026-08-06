@@ -86,6 +86,28 @@ def test_nonsense_downloads_become_zero_not_none(transformer):
     assert transformer.transform(dict(VALID, downloads="lots"))["downloads"] == 0
 
 
+def test_github_only_fields_stay_empty_for_other_sources(transformer):
+    # - Null, not false or zero. npm has no concept of being archived, and
+    #   recording it as "not archived" would be an answer to a question that
+    #   source never gets asked.
+    row = transformer.transform(dict(VALID, source="npm"))
+    assert row["archived"] is None
+    assert row["is_fork"] is None
+    assert row["open_issues_and_prs"] is None
+
+
+def test_github_flags_survive_when_present(transformer):
+    row = transformer.transform(dict(VALID, archived=True, is_fork=False, open_issues_and_prs=42))
+    assert row["archived"] is True
+    assert row["is_fork"] is False
+    assert row["open_issues_and_prs"] == 42
+
+
+def test_zero_open_issues_is_kept_as_zero(transformer):
+    # - Distinct from absent: a project really can have an empty backlog.
+    assert transformer.transform(dict(VALID, open_issues_and_prs=0))["open_issues_and_prs"] == 0
+
+
 def test_counts_default_to_zero(transformer):
     row = transformer.transform(dict(VALID, stars=None, forks="nonsense"))
     assert row["stars"] == 0

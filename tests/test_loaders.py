@@ -27,6 +27,9 @@ ROW = {
     "description": "An open source machine learning framework",
     # - GitHub reports no download figure, so this stays empty rather than zero.
     "downloads": None,
+    "open_issues_and_prs": 1420,
+    "archived": False,
+    "is_fork": False,
     "extracted_at": "2024-08-06T12:00:00+00:00",
 }
 
