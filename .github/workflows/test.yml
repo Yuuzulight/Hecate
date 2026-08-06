@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # - Lets a run be started by hand. Push events are the normal trigger, but
+  #   they occasionally fail to create a run at all during GitHub incidents,
+  #   and without this the only recourse is pushing an empty commit to a queue
+  #   that is already not moving.
+  workflow_dispatch:
 
 # - Least privilege. Without this the job inherits the repository default,
 #   which is usually write, for something that only ever needs to read code.
