@@ -1,0 +1,19 @@
+# - The ** matters. Docker matches a bare `__pycache__/` at the top level only,
+#   so without it the compiled files under pipeline/ ship in the image.
+**/__pycache__/
+**/*.py[cod]
+
+.venv/
+venv/
+.git/
+.gitignore
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+tests/
+dbt/
+k8s/
+docs/
+.env
+*.md

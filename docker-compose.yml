@@ -1,0 +1,46 @@
+# Local development database.
+#
+#   docker compose up -d postgres        the database on its own
+#   docker compose --profile tools up -d  and pgAdmin alongside it
+#
+# The published port comes from DB_PORT so it can be moved out of the way when
+# something else already has 5432.
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: hecate-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-hecate}
+      POSTGRES_USER: ${DB_USER:-dataflow}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dataflow}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dataflow} -d ${DB_NAME:-hecate}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # - Only starts with `--profile tools`, since most runs don't need it.
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: hecate-pgadmin
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-dev@hecate.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-dataflow}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
