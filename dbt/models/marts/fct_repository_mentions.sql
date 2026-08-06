@@ -20,19 +20,20 @@ with mentions as (
 select
     md5(repository_id || '-' || date_trunc('week', posted_at)::text) as mention_week_key,
     repository_id,
-    md5(repository_id) as repository_natural_key,
     date_trunc('week', posted_at)::date as week_starting,
 
     count(*) as posts,
-    count(distinct platform) as platforms,
     sum(score) as total_score,
     sum(comments) as total_comments,
-    max(score) as best_post_score,
 
     -- - Half-life of a fortnight. The shape matters more than the constant:
     --   last week's thread should outweigh last year's, and this says so
     --   legibly rather than precisely.
-    round(sum(score * exp(-age_days / 14.0))::numeric, 2) as decayed_score
+    --
+    --   Age is floored at zero. A post timestamped in the future would
+    --   otherwise make the exponent positive and let one bad clock or one
+    --   mangled date outrank everything real.
+    round(sum(score * exp(-greatest(age_days, 0) / 14.0))::numeric, 2) as decayed_score
 
 from mentions
 group by repository_id, date_trunc('week', posted_at)

@@ -67,8 +67,10 @@ models:
         tests: [not_null]
       - name: decayed_score
         description: >
-          Score with a fortnight half-life applied. Comparable between
-          repositories in the same week, not across distant weeks.
+          Score with a fortnight half-life applied, and age floored at zero so
+          a future-dated post cannot be amplified instead of discounted.
+          Comparable between repositories in the same week, not across distant
+          weeks.
         tests: [not_null]
 
   - name: dim_languages

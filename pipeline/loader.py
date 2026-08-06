@@ -235,7 +235,12 @@ class PostgreSQLLoader:
         `with_mentions` says whether the mention extractors ran. When they did
         not, the count is left null rather than written as zero - otherwise a
         run with mentions switched off would look like a day nobody posted.
+
+        mention_count is cumulative, every post ever seen for that repository,
+        not posts on that day. The daily figure is the difference between two
+        snapshots, which is the whole reason this table exists.
         """
+        # - Not interpolated user input: a fixed choice between two literals.
         mention_expression = (
             "coalesce(m.mentions, 0)" if with_mentions else "NULL::int"
         )

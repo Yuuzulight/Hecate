@@ -315,6 +315,17 @@ def test_mention_count_is_zero_when_they_ran_and_found_nothing(loader):
     assert snapshots(loader)[0][2] == 0
 
 
+def test_the_mention_count_is_cumulative_not_daily(loader):
+    # - Every post ever seen, not posts today. The daily figure is the
+    #   difference between two snapshots, which is why this table exists.
+    loader.load_repositories([ROW])
+    loader.load_mentions([MENTION])
+    loader.snapshot(with_mentions=True)
+    loader.load_mentions([dict(MENTION, id="hackernews_2")])
+    loader.snapshot(with_mentions=True)
+    assert snapshots(loader)[0][2] == 2
+
+
 def test_mentions_are_counted_per_repository(loader):
     loader.load_repositories([ROW, dict(ROW, id="github_2")])
     loader.load_mentions([
