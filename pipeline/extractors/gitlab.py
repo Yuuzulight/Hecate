@@ -10,7 +10,7 @@ row for a single field, which isn't worth it here, so language stays empty.
 """
 
 from pipeline.exceptions import ExtractError
-from pipeline.extractors.base import TIMEOUT, Extractor
+from pipeline.extractors.base import Extractor
 
 PROJECTS_PATH = "/api/v4/projects"
 BASE_URL = "https://gitlab.com"

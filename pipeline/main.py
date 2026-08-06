@@ -1,4 +1,4 @@
-﻿"""Pipeline entry point.
+"""Pipeline entry point.
 
 Runs each source in turn: extract, normalise, load. A source that fails is
 logged and counted and the run carries on with the rest, because one API having

@@ -1,4 +1,4 @@
-﻿"""Loader: SQL wiring, batching, transactions, and error handling.
+"""Loader: SQL wiring, batching, transactions, and error handling.
 
 These run against a stand-in connection. Whether the SQL is actually idempotent
 is a question a mock cannot answer, so that's checked against a real database in

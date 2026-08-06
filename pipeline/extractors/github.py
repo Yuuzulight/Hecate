@@ -6,7 +6,7 @@ the top of the distribution, not a complete census.
 """
 
 from pipeline.exceptions import ExtractError
-from pipeline.extractors.base import TIMEOUT, Extractor
+from pipeline.extractors.base import Extractor
 
 SEARCH_URL = "https://api.github.com/search/repositories"
 PER_PAGE = 100

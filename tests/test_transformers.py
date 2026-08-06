@@ -1,4 +1,4 @@
-﻿"""Transformer: normalisation, validation, and what happens to bad records."""
+"""Transformer: normalisation, validation, and what happens to bad records."""
 
 from datetime import datetime, timezone
 

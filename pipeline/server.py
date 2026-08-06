@@ -1,4 +1,4 @@
-﻿"""Metrics endpoint.
+"""Metrics endpoint.
 
 The scheduled job's counters vanish when its pod exits, so anything you want to
 look at between runs has to be read back off the database. This serves

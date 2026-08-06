@@ -1,4 +1,4 @@
-﻿"""Idempotency, checked against a real PostgreSQL.
+"""Idempotency, checked against a real PostgreSQL.
 
 Whether ON CONFLICT actually does what it's supposed to is not something a mock
 can tell you, so these run against a live database. Bring one up with
@@ -12,7 +12,6 @@ a database that won't accept us is a failure, not a skip.
 
 import os
 
-import psycopg2
 import pytest
 
 from pipeline.config import Config

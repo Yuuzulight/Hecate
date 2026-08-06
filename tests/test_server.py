@@ -1,12 +1,11 @@
-﻿"""Metrics server: gauge refresh and staying up when the database wobbles."""
+"""Metrics server: gauge refresh and staying up when the database wobbles."""
 
 from unittest.mock import MagicMock
 
-import psycopg2
 import pytest
 from prometheus_client import REGISTRY
 
-from pipeline import metrics, server
+from pipeline import server
 from pipeline.config import Config
 from pipeline.exceptions import LoadError
 
