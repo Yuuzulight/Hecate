@@ -22,6 +22,11 @@ COLUMNS = (
     "created_at", "updated_at", "description", "downloads", "extracted_at",
 )
 
+MENTION_COLUMNS = (
+    "id", "platform", "repository_id", "title", "url", "score", "comments",
+    "author", "channel", "posted_at", "extracted_at",
+)
+
 # - downloads stays nullable rather than defaulting to zero. GitHub and GitLab
 #   don't report one at all, and "no such metric" is a different thing from "no
 #   downloads" - collapsing them would quietly drag every average down.
@@ -46,6 +51,30 @@ CREATE TABLE IF NOT EXISTS raw_repositories (
 -- - For databases created before downloads existed.
 ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS downloads BIGINT;
 
+-- - Posts get their own table. Every row above is an artifact with an identity;
+--   a post is an event *about* one, which is a different grain. Putting them
+--   together would leave stars, forks and downloads meaningless for post rows
+--   and fold a different kind of thing into every cross-source aggregate.
+CREATE TABLE IF NOT EXISTS social_mentions (
+    id VARCHAR PRIMARY KEY,
+    platform VARCHAR NOT NULL,
+    repository_id VARCHAR NOT NULL REFERENCES raw_repositories(id) ON DELETE CASCADE,
+    title TEXT,
+    url VARCHAR,
+    score INTEGER,
+    comments INTEGER,
+    author VARCHAR,
+    channel VARCHAR,
+    posted_at TIMESTAMPTZ NOT NULL,
+    extracted_at TIMESTAMPTZ NOT NULL,
+    loaded_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_mentions_repository
+    ON social_mentions(repository_id);
+CREATE INDEX IF NOT EXISTS idx_social_mentions_posted_at
+    ON social_mentions(posted_at);
+
 CREATE INDEX IF NOT EXISTS idx_raw_repositories_source
     ON raw_repositories(source);
 CREATE INDEX IF NOT EXISTS idx_raw_repositories_extracted_at
@@ -67,6 +96,20 @@ ON CONFLICT (id) DO UPDATE SET
     updated_at = EXCLUDED.updated_at,
     description = EXCLUDED.description,
     downloads = EXCLUDED.downloads,
+    extracted_at = EXCLUDED.extracted_at,
+    loaded_at = NOW()
+"""
+
+
+# - Score and comments move as a post ages, so they refresh. What the post is,
+#   who wrote it and when, and what it points at, do not.
+UPSERT_MENTION = f"""
+INSERT INTO social_mentions ({", ".join(MENTION_COLUMNS)})
+VALUES %s
+ON CONFLICT (id) DO UPDATE SET
+    title = EXCLUDED.title,
+    score = EXCLUDED.score,
+    comments = EXCLUDED.comments,
     extracted_at = EXCLUDED.extracted_at,
     loaded_at = NOW()
 """
@@ -112,6 +155,47 @@ class PostgreSQLLoader:
         metrics.rows_processed.labels(stage="load", source="postgres").inc(len(values))
         self.log.info("loaded", extra={"context": {"rows": len(values)}})
         return len(values)
+
+    def load_mentions(self, mentions: list[dict]) -> int:
+        """Upsert posts, dropping any whose repository we don't track.
+
+        The foreign key is the point of this table, so a mention of something
+        unknown is reported and discarded rather than inserted orphaned - an
+        orphan would count towards attention for a project that isn't in the
+        dataset, which is worse than not counting it at all.
+        """
+        if not mentions:
+            return 0
+
+        unique = {m["id"]: m for m in mentions}
+        known = self._known_repository_ids({m["repository_id"] for m in unique.values()})
+
+        usable = [m for m in unique.values() if m["repository_id"] in known]
+        dropped = len(unique) - len(usable)
+        if dropped:
+            self.log.warning(
+                "mentions dropped, repository not tracked",
+                extra={"context": {"dropped": dropped, "of": len(unique)}},
+            )
+        if not usable:
+            return 0
+
+        values = [tuple(m.get(column) for column in MENTION_COLUMNS) for m in usable]
+        with self.transaction() as cur:
+            execute_values(cur, UPSERT_MENTION, values, page_size=len(values))
+
+        metrics.rows_processed.labels(stage="load", source="mentions").inc(len(values))
+        self.log.info("mentions loaded", extra={"context": {"rows": len(values)}})
+        return len(values)
+
+    def _known_repository_ids(self, ids: set[str]) -> set[str]:
+        if not ids:
+            return set()
+        with self.transaction() as cur:
+            cur.execute(
+                "SELECT id FROM raw_repositories WHERE id = ANY(%s)", (list(ids),)
+            )
+            return {row[0] for row in cur.fetchall()}
 
     def rows_for(self, source: str) -> list[dict]:
         """Read back what is stored for one source.

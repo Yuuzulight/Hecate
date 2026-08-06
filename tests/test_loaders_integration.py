@@ -66,7 +66,10 @@ def loader():
 
     loader.create_tables()
     with loader.conn.cursor() as cur:
-        cur.execute("TRUNCATE raw_repositories")
+        # - CASCADE because social_mentions references this table. Naming both
+        #   would work today and quietly stop clearing everything the next time
+        #   something else points here.
+        cur.execute("TRUNCATE raw_repositories CASCADE")
     loader.conn.commit()
 
     yield loader
@@ -186,6 +189,97 @@ def test_rows_for_only_returns_the_source_asked_for(loader):
 
 def test_rows_for_an_absent_source_is_empty(loader):
     assert loader.rows_for("gitlab") == []
+
+
+MENTION = {
+    "id": "hackernews_1",
+    "platform": "hackernews",
+    "repository_id": "github_1",
+    "title": "Show HN: tensorflow",
+    "url": "https://news.ycombinator.com/item?id=1",
+    "score": 240,
+    "comments": 31,
+    "author": "someone",
+    "channel": None,
+    "posted_at": "2026-08-01T09:00:00+00:00",
+    "extracted_at": "2026-08-06T12:00:00+00:00",
+}
+
+
+def stored_mentions(loader):
+    return query(loader, "SELECT id, score FROM social_mentions ORDER BY id")
+
+
+def test_a_mention_of_a_tracked_repository_is_stored(loader):
+    loader.load_repositories([ROW])
+    assert loader.load_mentions([MENTION]) == 1
+    assert stored_mentions(loader) == [("hackernews_1", 240)]
+
+
+def test_a_mention_of_an_unknown_repository_is_dropped(loader):
+    # - The foreign key is the point. An orphan would count as attention for
+    #   something not in the dataset, which is worse than not counting it.
+    loader.load_repositories([ROW])
+    assert loader.load_mentions([dict(MENTION, repository_id="github_nope")]) == 0
+    assert stored_mentions(loader) == []
+
+
+def test_a_mixed_batch_keeps_what_it_can(loader):
+    loader.load_repositories([ROW])
+    kept = loader.load_mentions([
+        MENTION,
+        dict(MENTION, id="hackernews_2", repository_id="github_nope"),
+    ])
+    assert kept == 1
+
+
+def test_reloading_a_post_refreshes_its_score(loader):
+    loader.load_repositories([ROW])
+    loader.load_mentions([MENTION])
+    loader.load_mentions([dict(MENTION, score=900, comments=77)])
+    assert stored_mentions(loader) == [("hackernews_1", 900)]
+    assert query(loader, "SELECT count(*) FROM social_mentions")[0][0] == 1
+
+
+def test_what_a_post_points_at_is_never_rewritten(loader):
+    loader.load_repositories([ROW, dict(ROW, id="github_2")])
+    loader.load_mentions([MENTION])
+    loader.load_mentions([dict(MENTION, repository_id="github_2")])
+    assert query(loader, "SELECT repository_id FROM social_mentions")[0][0] == "github_1"
+
+
+def test_duplicate_posts_within_a_batch_are_collapsed(loader):
+    loader.load_repositories([ROW])
+    assert loader.load_mentions([MENTION, dict(MENTION, score=999)]) == 1
+    assert stored_mentions(loader) == [("hackernews_1", 999)]
+
+
+def test_an_empty_mention_batch_touches_nothing(loader):
+    assert loader.load_mentions([]) == 0
+
+
+def test_posts_from_different_platforms_coexist(loader):
+    # - The table is meant to hold any platform, not just whichever landed
+    #   first. This is the check that the abstraction holds.
+    loader.load_repositories([ROW])
+    loader.load_mentions([
+        MENTION,
+        dict(MENTION, id="reddit_1", platform="reddit", channel="rust", score=88),
+    ])
+    rows = query(
+        loader,
+        "SELECT platform, count(*) FROM social_mentions GROUP BY platform ORDER BY platform",
+    )
+    assert rows == [("hackernews", 1), ("reddit", 1)]
+
+
+def test_mentions_go_when_their_repository_does(loader):
+    loader.load_repositories([ROW])
+    loader.load_mentions([MENTION])
+    with loader.conn.cursor() as cur:
+        cur.execute("DELETE FROM raw_repositories WHERE id = 'github_1'")
+    loader.conn.commit()
+    assert stored_mentions(loader) == []
 
 
 def test_these_tests_do_not_touch_the_real_table(loader):
