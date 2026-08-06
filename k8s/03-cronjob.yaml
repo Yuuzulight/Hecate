@@ -1,19 +1,18 @@
 # Daily extraction run.
 #
-# imagePullPolicy is Never because this expects the image to already be on the
-# node. Docker Desktop's Kubernetes runs its own containerd, separate from the
-# Docker daemon, so a locally built image is not visible to it until you put it
-# there:
+# Pulls a published, versioned image, so nothing has to be side-loaded onto the
+# node and there is no way to end up running a stale build under a tag that
+# never changed.
 #
-#   docker save hecate:v1 | docker exec -i desktop-control-plane \
+# To run an unreleased build instead, put it on the node and pin the policy:
+#
+#   docker save hecate:dev | docker exec -i desktop-control-plane \
 #     ctr -n k8s.io images import -
 #
-# Re-run that after every rebuild. The tag stays hecate:v1, so a stale copy on
-# the node keeps running happily and the only symptom is the pipeline quietly
-# doing less than it should - a run reporting one source instead of four.
-#
-# Against a real registry, drop the pull policy and use the full image
-# reference instead.
+# then set image: hecate:dev with imagePullPolicy: Never. Re-import after every
+# rebuild - the tag stays put, so a stale copy keeps running happily and the
+# only symptom is the pipeline quietly collecting from fewer sources than it
+# should.
 
 apiVersion: batch/v1
 kind: CronJob
@@ -46,8 +45,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: pipeline
-              image: hecate:v1
-              imagePullPolicy: Never
+              image: ghcr.io/yuuzulight/hecate:1.0.0
               env:
                 - name: DB_HOST
                   value: postgres.hecate.svc.cluster.local

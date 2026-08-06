@@ -32,8 +32,7 @@ spec:
     spec:
       containers:
         - name: metrics
-          image: hecate:v1
-          imagePullPolicy: Never
+          image: ghcr.io/yuuzulight/hecate:1.0.0
           command: ["python", "-m", "pipeline.server"]
           ports:
             - name: metrics
