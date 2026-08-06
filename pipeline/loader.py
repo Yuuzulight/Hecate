@@ -87,6 +87,28 @@ CREATE INDEX IF NOT EXISTS idx_social_mentions_repository
 CREATE INDEX IF NOT EXISTS idx_social_mentions_posted_at
     ON social_mentions(posted_at);
 
+-- - Everything above describes now, and upserting in place means yesterday is
+--   gone. This is the only table that remembers, which is what growth rate and
+--   any decayed mention score need to exist at all.
+--
+--   Keyed on the day rather than the moment: a re-run replaces that day's row
+--   instead of appending, so the same idempotency guarantee holds here.
+CREATE TABLE IF NOT EXISTS repository_snapshots (
+    repository_id VARCHAR NOT NULL REFERENCES raw_repositories(id) ON DELETE CASCADE,
+    captured_on DATE NOT NULL,
+    stars INTEGER,
+    forks INTEGER,
+    downloads BIGINT,
+    -- - Null means the mention extractors did not run. Zero means they ran and
+    --   found nothing. Averaging those together would be the same mistake as
+    --   treating an absent download figure as no downloads.
+    mention_count INTEGER,
+    PRIMARY KEY (repository_id, captured_on)
+);
+
+CREATE INDEX IF NOT EXISTS idx_repository_snapshots_captured_on
+    ON repository_snapshots(captured_on);
+
 CREATE INDEX IF NOT EXISTS idx_raw_repositories_source
     ON raw_repositories(source);
 CREATE INDEX IF NOT EXISTS idx_raw_repositories_extracted_at
@@ -202,6 +224,42 @@ class PostgreSQLLoader:
         metrics.rows_processed.labels(stage="load", source="mentions").inc(len(values))
         self.log.info("mentions loaded", extra={"context": {"rows": len(values)}})
         return len(values)
+
+    def snapshot(self, with_mentions: bool) -> int:
+        """Record today's figures for every stored repository.
+
+        Derived from what is already in the database rather than from the batch
+        just processed, so a source that failed this run keeps yesterday's row
+        rather than vanishing from the series.
+
+        `with_mentions` says whether the mention extractors ran. When they did
+        not, the count is left null rather than written as zero - otherwise a
+        run with mentions switched off would look like a day nobody posted.
+        """
+        mention_expression = (
+            "coalesce(m.mentions, 0)" if with_mentions else "NULL::int"
+        )
+        with self.transaction() as cur:
+            cur.execute(f"""
+                INSERT INTO repository_snapshots
+                    (repository_id, captured_on, stars, forks, downloads, mention_count)
+                SELECT r.id, current_date, r.stars, r.forks, r.downloads,
+                       {mention_expression}
+                FROM raw_repositories r
+                LEFT JOIN (
+                    SELECT repository_id, count(*) AS mentions
+                    FROM social_mentions GROUP BY repository_id
+                ) m ON m.repository_id = r.id
+                ON CONFLICT (repository_id, captured_on) DO UPDATE SET
+                    stars = EXCLUDED.stars,
+                    forks = EXCLUDED.forks,
+                    downloads = EXCLUDED.downloads,
+                    mention_count = EXCLUDED.mention_count
+            """)
+            written = cur.rowcount
+
+        self.log.info("snapshot written", extra={"context": {"rows": written}})
+        return written
 
     def resolve_urls(self, urls: set[str]) -> dict[str, str]:
         """Map project URLs to the repository ids we store them under.

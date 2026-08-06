@@ -98,17 +98,26 @@ def run(config: Config) -> tuple[int, list[str]]:
                 )
 
         # - After every repository source, so links have something to match.
+        mentions_ran = False
         for extractor_class in MENTION_EXTRACTORS:
             extractor = extractor_class(config)
             try:
                 mentions = resolve(loader, extractor.extract())
                 loader.load_mentions(mentions)
+                mentions_ran = True
             except Exception as exc:
                 failed.append(extractor.source)
                 log.exception(
                     "source failed",
                     extra={"context": {"source": extractor.source, "error": str(exc)}},
                 )
+
+        # - Last, so it records the state everything else just produced. A
+        #   failure here costs the day's history, not the day's data.
+        try:
+            loader.snapshot(with_mentions=mentions_ran)
+        except Exception as exc:
+            log.exception("snapshot failed", extra={"context": {"error": str(exc)}})
     finally:
         loader.close()
 

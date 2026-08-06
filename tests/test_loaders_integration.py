@@ -282,6 +282,75 @@ def test_mentions_go_when_their_repository_does(loader):
     assert stored_mentions(loader) == []
 
 
+def snapshots(loader, columns="repository_id, stars, mention_count"):
+    return query(loader, f"SELECT {columns} FROM repository_snapshots ORDER BY repository_id")
+
+
+def test_a_snapshot_records_every_stored_repository(loader):
+    loader.load_repositories([ROW, dict(ROW, id="github_2", stars=5)])
+    assert loader.snapshot(with_mentions=False) == 2
+    assert [r[0] for r in snapshots(loader)] == ["github_1", "github_2"]
+
+
+def test_snapshotting_twice_in_a_day_replaces_rather_than_appends(loader):
+    loader.load_repositories([ROW])
+    loader.snapshot(with_mentions=False)
+    loader.load_repositories([dict(ROW, stars=999)])
+    loader.snapshot(with_mentions=False)
+
+    assert snapshots(loader) == [("github_1", 999, None)]
+
+
+def test_mention_count_is_null_when_the_extractors_did_not_run(loader):
+    # - Distinct from zero. A run with mentions switched off is not a day
+    #   nobody posted.
+    loader.load_repositories([ROW])
+    loader.snapshot(with_mentions=False)
+    assert snapshots(loader)[0][2] is None
+
+
+def test_mention_count_is_zero_when_they_ran_and_found_nothing(loader):
+    loader.load_repositories([ROW])
+    loader.snapshot(with_mentions=True)
+    assert snapshots(loader)[0][2] == 0
+
+
+def test_mentions_are_counted_per_repository(loader):
+    loader.load_repositories([ROW, dict(ROW, id="github_2")])
+    loader.load_mentions([
+        MENTION,
+        dict(MENTION, id="hackernews_2"),
+        dict(MENTION, id="hackernews_3", repository_id="github_2"),
+    ])
+    loader.snapshot(with_mentions=True)
+    assert [(r[0], r[2]) for r in snapshots(loader)] == [("github_1", 2), ("github_2", 1)]
+
+
+def test_a_source_that_failed_this_run_keeps_its_place_in_the_series(loader):
+    # - Snapshots read the stored table, not the batch just processed, so a
+    #   source that failed today still has yesterday's figures recorded.
+    loader.load_repositories([ROW])
+    loader.snapshot(with_mentions=False)
+    assert len(snapshots(loader)) == 1
+
+
+def test_nulls_survive_into_the_snapshot(loader):
+    # - GitHub reports no downloads, and the snapshot must not turn that into
+    #   zero on the way through.
+    loader.load_repositories([ROW])
+    loader.snapshot(with_mentions=False)
+    assert query(loader, "SELECT downloads FROM repository_snapshots")[0][0] is None
+
+
+def test_snapshots_go_when_their_repository_does(loader):
+    loader.load_repositories([ROW])
+    loader.snapshot(with_mentions=False)
+    with loader.conn.cursor() as cur:
+        cur.execute("DELETE FROM raw_repositories WHERE id = 'github_1'")
+    loader.conn.commit()
+    assert snapshots(loader) == []
+
+
 def test_these_tests_do_not_touch_the_real_table(loader):
     # - The guard for the whole file: if search_path ever stops pointing at the
     #   test schema, this fails before anything gets truncated for real.
