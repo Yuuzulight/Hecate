@@ -87,9 +87,24 @@ pytest --cov=pipeline --cov-report=term-missing
 
 ## Status
 
-Early, and built in the open — the pipeline core works end to end, the rest is tracked in [issues](https://github.com/Yuuzulight/Hecate/issues). GitHub and npm are wired up; PyPI and GitLab come next, then the dbt models, then the Kubernetes and monitoring layers.
+Early, and built in the open — all four sources are collecting and the pipeline runs end to end. Next up are the dbt models, then the Kubernetes and monitoring layers. Progress is tracked in [issues](https://github.com/Yuuzulight/Hecate/issues).
 
-A note on comparing across sources: not every metric exists everywhere. Packages have download counts and no stars, repositories have stars and no downloads. Where a source doesn't report something it's stored as null rather than zero, because "this doesn't apply" and "this is zero" are different claims and averaging them together gives you neither.
+## What each source actually gives you
+
+Not every metric exists everywhere, and the gaps matter more than they look:
+
+| | stars | downloads | language | first published |
+|---|---|---|---|---|
+| GitHub | yes | — | usually | yes |
+| GitLab | yes | — | — | yes |
+| npm | — | weekly | — | — |
+| PyPI | — | — | yes | yes |
+
+Where a source doesn't report something it's stored as null, not zero. "This doesn't apply" and "this is zero" are different claims, and averaging them together gives you neither.
+
+A few of these are worth explaining. GitLab does know what language a project is in, but only from a separate endpoint per project, which is one extra request per row for one field. npm's search results don't say at all, and defaulting everything to JavaScript would be inventing data. PyPI's download figures used to come from its JSON API and now return -1 from a deprecated stub — the real numbers live in a public BigQuery dataset, which is its own piece of work.
+
+Neither npm nor PyPI publishes a ranked list of top packages, so those two are seeded: npm searches across a set of broad ecosystem keywords and ranks what comes back by weekly downloads, PyPI works from a hand-picked list. GitHub and GitLab will both just hand over their most-starred, in order.
 
 ## Stack
 
