@@ -24,7 +24,7 @@ One row per repository or package, keyed on `id`. The loader upserts, so re-runn
 | `forks` | integer | 0 for the package registries |
 | `language` | varchar | null where the source doesn't report one |
 | `created_at` | timestamptz | first published, null for npm |
-| `updated_at` | timestamptz | last activity |
+| `updated_at` | timestamptz | last activity — see the note below, it isn't the same thing on every source |
 | `description` | text | |
 | `downloads` | bigint | weekly, npm only. Null elsewhere |
 | `extracted_at` | timestamptz | when the pipeline read it |
@@ -57,6 +57,19 @@ Everything above, plus:
 | `days_since_update` | days since last activity |
 
 `days_since_update` is the maintenance signal. A large value next to a high star count is roughly the shape of an abandoned project.
+
+**It doesn't mean quite the same thing on every source, though**, and that matters if you compare across them:
+
+| source | what it measures |
+|---|---|
+| GitHub | last commit (`pushed_at`) |
+| npm | last publish |
+| PyPI | last release upload |
+| GitLab | **last activity of any kind** — an issue comment counts |
+
+The first three are all "someone shipped something". GitLab's is looser: a project nobody has committed to in two years still looks fresh if people are filing issues. GitLab's project listing doesn't carry a push timestamp, and getting one costs an extra request per project, so this is a known gap rather than an oversight — treat GitLab staleness as a weaker signal than the other three.
+
+GitHub deserves a note of its own. It also exposes `updated_at`, which sounds like the right field and isn't: it moves whenever the repository *record* changes, and that includes someone starring it. For a popular project it reads as today, permanently. Using it made every one of the 500 most-starred repositories look actively maintained, which is why this uses `pushed_at`.
 
 ## fct_repositories
 

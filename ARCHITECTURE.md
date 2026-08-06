@@ -125,8 +125,9 @@ They also run in their own schema. They truncate between cases, and pointed at t
 - npm and PyPI samples are shaped by their seed lists rather than being true rankings
 - npm and GitLab contribute no language data, so `dim_languages` covers GitHub and PyPI only
 - PyPI download figures aren't collected. Its JSON API returns a deprecated stub answering -1; the real numbers live in a public BigQuery dataset, which is a separate piece of work
-- Prometheus storage is `emptyDir`, so metrics don't survive a restart
-- Grafana runs with anonymous access for local use. That needs turning off before it's reachable by anyone who wasn't invited
+- Staleness isn't quite the same measurement on every source. GitHub uses the last commit, npm the last publish, PyPI the last release — but GitLab's project listing only offers last-activity-of-any-kind, so an issue comment keeps an abandoned project looking fresh. Getting a real push date costs a request per project, the same trade as language
+- Everything describes now. There's no history, so growth rate and trend aren't answerable without a snapshot table
+- The NetworkPolicy needs a CNI that enforces it, which Docker Desktop's built-in cluster doesn't. Applying it there documents intent rather than restricting anything
 
 ## If this continued
 
@@ -134,5 +135,6 @@ Roughly in order of what would add most:
 
 1. PyPI downloads from BigQuery, which would give three of the four sources a real usage signal
 2. Snapshots over time. Everything currently describes now; growth rate and trend need history, which means a periodic snapshot table rather than upserting in place
-3. Language for GitLab, if the extra request per project turns out to be affordable
+3. Language and a real push date for GitLab, if the extra request per project turns out to be affordable — it would fix two limitations at once
 4. Alerting on extraction age, since a job that silently stops running is the most likely real failure
+5. A Pushgateway, if per-run timing is ever worth having. The extract, transform and load histograms are recorded inside a pod that exits in seconds, so nothing ever scrapes them

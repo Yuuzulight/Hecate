@@ -75,6 +75,11 @@ models:
           Days since the last activity. The maintenance signal - a large number
           next to a high star count is the shape of an abandoned project.
 
+          Not identical across sources: GitHub measures the last commit, npm
+          the last publish, PyPI the last release, but GitLab counts activity
+          of any kind, so an unmaintained project with a busy issue tracker
+          still reads as fresh. Weaker signal there than elsewhere.
+
       - name: extracted_at
         description: When the pipeline read this record from its source.
         tests: [not_null]

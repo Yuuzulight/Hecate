@@ -80,6 +80,11 @@ class GitLabExtractor(Extractor):
             # - See the module docstring: one request per project for one field.
             "language": None,
             "created_at": raw.get("created_at"),
+            # - The closest GitLab offers in a project listing, but looser than
+            #   GitHub's pushed_at: an issue comment counts as activity, so a
+            #   project nobody has committed to in years can still look fresh.
+            #   A real push date is one request per project, same trade as
+            #   language. Documented as a weaker signal instead.
             "updated_at": raw.get("last_activity_at"),
             "description": raw.get("description"),
             "downloads": None,
