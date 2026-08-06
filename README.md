@@ -65,6 +65,22 @@ docker build -t hecate:v1 . && docker run --rm --network hecate_default -e DB_HO
 
 Want to browse the data? `docker compose --profile tools up -d` adds pgAdmin on port 5050.
 
+## Layout
+
+```
+pipeline/
+  extractors/     one module per source, on a shared base
+  transformers/   normalisation everything passes through
+  loaders/        PostgreSQL, upsert-based
+  expectations.py data quality checks, run after load
+  server.py       metrics endpoint
+  main.py         wires it together
+dbt/models/       staging view, then fact and dimensions
+k8s/              namespace, database, CronJob, metrics deployment
+k8s/monitoring/   Prometheus and Grafana
+tests/
+```
+
 ## Analytics
 
 The dbt models live in `dbt/` and read from the table the pipeline writes. Install them as an extra and point dbt at the profile in the project:
@@ -102,6 +118,72 @@ For coverage:
 ```bash
 pytest --cov=pipeline --cov-report=term-missing
 ```
+
+## On Kubernetes
+
+Any cluster will do. These instructions assume Docker Desktop's, which is the fiddliest case.
+
+```bash
+kubectl apply -f k8s/00-namespace.yaml
+```
+
+Create the secret directly, so no password ends up in a file:
+
+```bash
+kubectl create secret generic db-secret -n hecate --from-literal=username=dataflow --from-literal=password='pick-something' --from-literal=github-token='' --from-literal=gitlab-token=''
+```
+
+```bash
+kubectl apply -f k8s/01-postgres.yaml -f k8s/03-cronjob.yaml -f k8s/04-deployment.yaml -f k8s/04-hpa.yaml
+```
+
+Docker Desktop's Kubernetes runs its own containerd, separate from the Docker daemon, so a locally built image isn't visible to it. Put it on the node:
+
+```bash
+docker save hecate:v1 | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+```
+
+Do that again after every rebuild. The tag doesn't change, so a stale copy keeps running quite happily and the only symptom is the pipeline doing less than it should.
+
+The autoscaler needs metrics-server, which Docker Desktop doesn't ship. The install and the `--kubelet-insecure-tls` patch it needs are both documented at the top of `k8s/04-hpa.yaml`.
+
+To trigger a run rather than waiting for 02:00:
+
+```bash
+kubectl create job hecate-now --from=cronjob/hecate-daily -n hecate && kubectl logs -f job/hecate-now -n hecate
+```
+
+Monitoring is optional and goes on afterwards:
+
+```bash
+kubectl create configmap grafana-dashboard -n hecate --from-file=hecate.json=k8s/monitoring/dashboards/hecate.json && kubectl apply -f k8s/monitoring/
+```
+
+Then `kubectl port-forward svc/grafana 3000:3000 -n hecate`. Grafana is set up for anonymous access, which suits a laptop and nothing else — turn it off in `k8s/monitoring/grafana.yaml` before putting it anywhere reachable.
+
+## Metrics
+
+The exporter serves Prometheus metrics on port 8000.
+
+| metric | what it tells you |
+|---|---|
+| `hecate_repositories{source}` | rows currently stored, per source |
+| `hecate_last_extraction_age_seconds{source}` | time since that source was last read |
+| `hecate_rows_processed_total{stage,source}` | records handled at each stage |
+| `hecate_errors_total{type,source}` | failures, by where they happened |
+| `hecate_quality_checks_total{check,outcome}` | data quality results |
+| `hecate_extract_duration_seconds{source}` | how long each source takes |
+| `hecate_load_duration_seconds` | database write time |
+
+The first two are read back off the database rather than counted during a run. A scheduled job's counters die with its pod, so they'd be empty by the time anything scraped them. Extraction age is the one to alert on — if it climbs on every source at once, the job has stopped running.
+
+## Contributing
+
+Open an issue before anything substantial, and keep pull requests to one thing.
+
+Two conventions worth knowing. Nulls are meaningful here: if a source doesn't report a field, it stays null rather than becoming zero, because averages computed over fake zeros are wrong in ways nobody notices. And any non-trivial logic gets a test — the integration ones need a real database, so run `HECATE_INTEGRATION=1 pytest` before pushing anything that touches the loader.
+
+`ARCHITECTURE.md` has the reasoning behind most of the structural decisions.
 
 ## Status
 

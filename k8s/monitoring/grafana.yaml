@@ -5,12 +5,13 @@
 # and turning analytical questions into Prometheus metrics would be building a
 # worse database on top of a good one.
 #
-# The dashboard lives in grafana-dashboard.json rather than inline here, so it
-# stays editable in Grafana and readable in review. Load it before applying
-# this file:
+# The dashboard lives in dashboards/hecate.json rather than inline here, so it
+# stays editable in Grafana and readable in review. It sits in a subdirectory
+# because `kubectl apply -f k8s/monitoring/` would otherwise try to apply the
+# dashboard as a manifest and fail on it. Load it before applying this file:
 #
 #   kubectl create configmap grafana-dashboard -n hecate \
-#     --from-file=hecate.json=k8s/monitoring/grafana-dashboard.json \
+#     --from-file=hecate.json=k8s/monitoring/dashboards/hecate.json \
 #     --dry-run=client -o yaml | kubectl apply -f -
 
 apiVersion: v1
