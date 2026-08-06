@@ -13,7 +13,10 @@
 
 with mentions as (
 
+    -- - Resolved only. Unresolved posts are kept in staging because they are
+    --   the discovery signal, but they have no repository to score against.
     select * from {{ ref('stg_social_mentions') }}
+    where repository_id is not null
 
 )
 

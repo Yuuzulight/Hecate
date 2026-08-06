@@ -24,8 +24,8 @@ COLUMNS = (
 )
 
 MENTION_COLUMNS = (
-    "id", "platform", "repository_id", "title", "url", "score", "comments",
-    "author", "channel", "posted_at", "extracted_at",
+    "id", "platform", "repository_id", "target_url", "title", "url", "score",
+    "comments", "author", "channel", "posted_at", "extracted_at",
 )
 
 # - downloads stays nullable rather than defaulting to zero. GitHub and GitLab
@@ -70,7 +70,15 @@ ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS is_fork BOOLEAN;
 CREATE TABLE IF NOT EXISTS social_mentions (
     id VARCHAR PRIMARY KEY,
     platform VARCHAR NOT NULL,
-    repository_id VARCHAR NOT NULL REFERENCES raw_repositories(id) ON DELETE CASCADE,
+    -- - Nullable. A post about a project we do not track is the interesting
+    --   case, not the discardable one: every source is seeded by cumulative
+    --   popularity, so anything trending now is exactly what the seeding
+    --   filtered out. The marts drop unresolved rows where a repository is
+    --   required, so scoring is unaffected.
+    repository_id VARCHAR REFERENCES raw_repositories(id) ON DELETE CASCADE,
+    -- - What the post pointed at, kept whether or not it resolved, so it can
+    --   resolve later once the repository exists.
+    target_url VARCHAR,
     title TEXT,
     url VARCHAR,
     score INTEGER,
@@ -86,6 +94,13 @@ CREATE INDEX IF NOT EXISTS idx_social_mentions_repository
     ON social_mentions(repository_id);
 CREATE INDEX IF NOT EXISTS idx_social_mentions_posted_at
     ON social_mentions(posted_at);
+
+-- - For databases created while mentions had to resolve.
+ALTER TABLE social_mentions ALTER COLUMN repository_id DROP NOT NULL;
+ALTER TABLE social_mentions ADD COLUMN IF NOT EXISTS target_url VARCHAR;
+
+CREATE INDEX IF NOT EXISTS idx_social_mentions_target_url
+    ON social_mentions(target_url) WHERE repository_id IS NULL;
 
 -- - Everything above describes now, and upserting in place means yesterday is
 --   gone. This is the only table that remembers, which is what growth rate and
@@ -145,6 +160,8 @@ INSERT INTO social_mentions ({", ".join(MENTION_COLUMNS)})
 VALUES %s
 ON CONFLICT (id) DO UPDATE SET
     title = EXCLUDED.title,
+    -- - So a mention resolves retrospectively once its repository is added.
+    repository_id = coalesce(EXCLUDED.repository_id, social_mentions.repository_id),
     score = EXCLUDED.score,
     comments = EXCLUDED.comments,
     extracted_at = EXCLUDED.extracted_at,
@@ -194,30 +211,38 @@ class PostgreSQLLoader:
         return len(values)
 
     def load_mentions(self, mentions: list[dict]) -> int:
-        """Upsert posts, dropping any whose repository we don't track.
+        """Upsert posts, resolved or not.
 
-        The foreign key is the point of this table, so a mention of something
-        unknown is reported and discarded rather than inserted orphaned - an
-        orphan would count towards attention for a project that isn't in the
-        dataset, which is worse than not counting it at all.
+        A mention pointing at a project we don't track is kept with a null
+        repository_id. It's the more interesting half: every source is seeded by
+        cumulative popularity, so a project being discussed before it has the
+        stars to be seeded is precisely what that seeding excludes.
+
+        A repository_id that doesn't exist is cleared rather than rejected, so
+        a stale id can't fail the batch - the URL is kept either way and can
+        resolve later.
         """
         if not mentions:
             return 0
 
         unique = {m["id"]: m for m in mentions}
-        known = self._known_repository_ids({m["repository_id"] for m in unique.values()})
+        claimed = {m["repository_id"] for m in unique.values() if m.get("repository_id")}
+        known = self._known_repository_ids(claimed)
 
-        usable = [m for m in unique.values() if m["repository_id"] in known]
-        dropped = len(unique) - len(usable)
-        if dropped:
-            self.log.warning(
-                "mentions dropped, repository not tracked",
-                extra={"context": {"dropped": dropped, "of": len(unique)}},
+        rows = []
+        for mention in unique.values():
+            repository_id = mention.get("repository_id")
+            rows.append(
+                mention if repository_id in known else {**mention, "repository_id": None}
             )
-        if not usable:
-            return 0
 
-        values = [tuple(m.get(column) for column in MENTION_COLUMNS) for m in usable]
+        resolved = sum(1 for r in rows if r["repository_id"])
+        self.log.info(
+            "mentions stored",
+            extra={"context": {"resolved": resolved, "unresolved": len(rows) - resolved}},
+        )
+
+        values = [tuple(m.get(column) for column in MENTION_COLUMNS) for m in rows]
         with self.transaction() as cur:
             execute_values(cur, UPSERT_MENTION, values, page_size=len(values))
 

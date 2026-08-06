@@ -6,7 +6,10 @@
 select
     id as mention_id,
     platform,
+    -- - Null where the post is about something not tracked. Kept, not filtered:
+    --   the marts decide what to do with it.
     repository_id,
+    target_url,
     title,
     url,
     coalesce(score, 0) as score,

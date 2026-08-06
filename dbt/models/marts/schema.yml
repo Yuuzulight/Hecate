@@ -73,6 +73,23 @@ models:
           weeks.
         tests: [not_null]
 
+  - name: fct_undiscovered_mentions
+    description: >
+      Projects being discussed that the dataset does not contain, ranked by
+      attention. The seeding is by cumulative popularity, so anything trending
+      before it is famous is excluded by construction - this is that exclusion
+      made visible, and the input to discovery.
+    columns:
+      - name: target_key
+        tests: [not_null, unique]
+      - name: target_url
+        tests: [not_null, unique]
+      - name: posts
+        tests: [not_null]
+      - name: decayed_score
+        description: Same half-life as the resolved fact, so the two are comparable.
+        tests: [not_null]
+
   - name: dim_languages
     description: >
       One row per language with the spread of stars across it. Sourced from

@@ -195,6 +195,7 @@ MENTION = {
     "id": "hackernews_1",
     "platform": "hackernews",
     "repository_id": "github_1",
+    "target_url": "https://github.com/tensorflow/tensorflow",
     "title": "Show HN: tensorflow",
     "url": "https://news.ycombinator.com/item?id=1",
     "score": 240,
@@ -216,21 +217,42 @@ def test_a_mention_of_a_tracked_repository_is_stored(loader):
     assert stored_mentions(loader) == [("hackernews_1", 240)]
 
 
-def test_a_mention_of_an_unknown_repository_is_dropped(loader):
-    # - The foreign key is the point. An orphan would count as attention for
-    #   something not in the dataset, which is worse than not counting it.
+def test_a_mention_of_an_unknown_repository_is_kept_unresolved(loader):
+    # - The reverse of the original rule. A post about something not tracked is
+    #   the discovery signal, so it is stored with a null repository_id rather
+    #   than thrown away.
     loader.load_repositories([ROW])
-    assert loader.load_mentions([dict(MENTION, repository_id="github_nope")]) == 0
-    assert stored_mentions(loader) == []
+    assert loader.load_mentions([dict(MENTION, repository_id="github_nope")]) == 1
+    assert query(loader, "SELECT repository_id FROM social_mentions")[0][0] is None
+    assert query(loader, "SELECT target_url FROM social_mentions")[0][0] is not None
 
 
-def test_a_mixed_batch_keeps_what_it_can(loader):
+def test_a_mixed_batch_keeps_everything(loader):
     loader.load_repositories([ROW])
     kept = loader.load_mentions([
         MENTION,
         dict(MENTION, id="hackernews_2", repository_id="github_nope"),
     ])
-    assert kept == 1
+    assert kept == 2
+    assert query(loader, "SELECT count(*) FROM social_mentions WHERE repository_id IS NULL")[0][0] == 1
+
+
+def test_a_mention_resolves_retrospectively_once_its_repository_appears(loader):
+    # - The discovery loop depends on this: a post stored unresolved today
+    #   attaches to the repository when a later run adds it.
+    loader.load_repositories([ROW])
+    loader.load_mentions([dict(MENTION, repository_id=None)])
+    assert query(loader, "SELECT repository_id FROM social_mentions")[0][0] is None
+
+    loader.load_mentions([MENTION])
+    assert query(loader, "SELECT repository_id FROM social_mentions")[0][0] == "github_1"
+
+
+def test_a_resolved_mention_is_not_unresolved_by_a_later_blank(loader):
+    loader.load_repositories([ROW])
+    loader.load_mentions([MENTION])
+    loader.load_mentions([dict(MENTION, repository_id=None)])
+    assert query(loader, "SELECT repository_id FROM social_mentions")[0][0] == "github_1"
 
 
 def test_reloading_a_post_refreshes_its_score(loader):
@@ -241,11 +263,15 @@ def test_reloading_a_post_refreshes_its_score(loader):
     assert query(loader, "SELECT count(*) FROM social_mentions")[0][0] == 1
 
 
-def test_what_a_post_points_at_is_never_rewritten(loader):
+def test_re_resolution_takes_the_newer_answer(loader):
+    # - Resolution is derived from target_url, which does not change, so a
+    #   different result means the URL now matches a different stored row - a
+    #   rename, usually. The newer answer is the right one. Only a blank is
+    #   ignored, which the test below covers.
     loader.load_repositories([ROW, dict(ROW, id="github_2")])
     loader.load_mentions([MENTION])
     loader.load_mentions([dict(MENTION, repository_id="github_2")])
-    assert query(loader, "SELECT repository_id FROM social_mentions")[0][0] == "github_1"
+    assert query(loader, "SELECT repository_id FROM social_mentions")[0][0] == "github_2"
 
 
 def test_duplicate_posts_within_a_batch_are_collapsed(loader):

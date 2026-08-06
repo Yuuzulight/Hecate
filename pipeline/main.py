@@ -32,26 +32,29 @@ MENTION_EXTRACTORS = (HackerNewsExtractor,)
 
 
 def resolve(loader: PostgreSQLLoader, mentions: list[dict]) -> list[dict]:
-    """Attach a repository id to each mention, dropping the ones that miss.
+    """Attach a repository id to each mention where one is known.
 
-    A story linking a project nobody here tracks is not an error - most of
-    Hacker News is about something else - so it is counted and discarded rather
-    than raised.
+    Mentions that match nothing are kept with a null id rather than dropped.
+    Most of Hacker News is about something we don't track, and that is the part
+    worth reading rather than the part to discard.
     """
     log = get_logger("main")
     found = loader.resolve_urls({m["target_url"] for m in mentions})
 
-    resolved = []
-    for mention in mentions:
-        repository_id = found.get(mention["target_url"])
-        if repository_id:
-            resolved.append({**mention, "repository_id": repository_id})
+    # - Annotates rather than filters. An unmatched mention is kept with a null
+    #   repository_id, because a project being talked about before it is
+    #   tracked is the signal, not noise to be thrown away.
+    annotated = [
+        {**mention, "repository_id": found.get(mention["target_url"])}
+        for mention in mentions
+    ]
 
+    matched = sum(1 for m in annotated if m["repository_id"])
     log.info(
         "mentions resolved",
-        extra={"context": {"matched": len(resolved), "of": len(mentions)}},
+        extra={"context": {"matched": matched, "of": len(annotated)}},
     )
-    return resolved
+    return annotated
 
 
 def run(config: Config) -> tuple[int, list[str]]:
