@@ -7,8 +7,7 @@ public.raw_repositories          written by the pipeline
   └── analytics_staging.stg_repositories     view, adds derived columns
         └── analytics_marts.fct_repositories  incremental table
             ├── dim_languages
-            ├── dim_sources
-            └── dim_dates
+            └── dim_sources
 ```
 
 ## raw_repositories
@@ -80,7 +79,7 @@ The star figures are computed only over sources that have stars, and `starred_co
 
 **dim_sources** — one row per source. Alongside the aggregates it carries `with_stars`, `with_downloads`, `with_language` and `with_created_at`, which say how many rows from that source actually populate each field. Check this before any cross-source comparison.
 
-**dim_dates** — daily spine from 2020-01-01 to today, with year, quarter, month, day of week and a weekend flag. Rebuilt on every run so it stays current.
+There's no date dimension. There was one, and nothing ever joined to it — the fact table carries no date key and no panel used it, so it was 2,400 rows rebuilt every run to answer questions nobody asked. If a genuine time series shows up, a spine can come back with it.
 
 ## Queries
 

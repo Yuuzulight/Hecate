@@ -36,7 +36,10 @@ class PyPiExtractor(Extractor):
 
     def fetch(self) -> list[dict]:
         rows = []
-        for name in PACKAGES[: self.config.batch_size]:
+        # - The whole list, every time. Slicing by batch_size would silently
+        #   return whichever packages happen to be listed first rather than any
+        #   meaningful subset, and there is no ranking here to slice by.
+        for name in PACKAGES:
             raw = self._package(name)
             if raw is not None:
                 rows.append(self._transform_to_schema(raw))

@@ -99,10 +99,39 @@ def test_it_serves_on_the_port_prometheus_expects(config, monkeypatch):
     assert seen["port"] == 8000
 
 
-def test_an_unreachable_database_exits_non_zero(config, monkeypatch):
+def test_an_unreachable_database_is_retried_rather_than_fatal(config, monkeypatch):
+    # - The database not being up yet is normal on a cluster, so the exporter
+    #   keeps serving and keeps trying instead of exiting. It used to connect
+    #   once outside the loop, which meant a restart left it failing against a
+    #   dead handle forever while still looking healthy.
     stub = MagicMock()
     stub.connect.side_effect = LoadError("connection refused")
     monkeypatch.setattr(server, "PostgreSQLLoader", lambda config: stub)
     monkeypatch.setattr(server, "start_http_server", lambda port: None)
 
-    assert server.main() == 1
+    labels = {"type": "database", "source": "postgres"}
+    before = REGISTRY.get_sample_value("hecate_errors_total", labels) or 0
+    server.serve(config, forever=False)
+    after = REGISTRY.get_sample_value("hecate_errors_total", labels)
+    assert after - before == 1
+
+
+def test_a_dropped_connection_is_replaced_on_the_next_cycle(config, monkeypatch):
+    built = []
+
+    def build(config):
+        stub = MagicMock()
+        stub.transaction.return_value.__enter__.return_value.fetchall.return_value = []
+        built.append(stub)
+        # - First one fails on use, forcing the loop to throw it away.
+        if len(built) == 1:
+            stub.transaction.side_effect = LoadError("server closed the connection")
+        return stub
+
+    monkeypatch.setattr(server, "PostgreSQLLoader", build)
+    monkeypatch.setattr(server, "start_http_server", lambda port: None)
+
+    server.serve(config, refresh_seconds=0, forever=True, cycles=2)
+
+    assert len(built) == 2, "a failed connection should be rebuilt, not reused"
+    built[0].close.assert_called_once()

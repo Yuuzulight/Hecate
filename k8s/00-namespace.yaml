@@ -9,7 +9,8 @@
 #     --from-literal=username=dataflow \
 #     --from-literal=password='<a real password>' \
 #     --from-literal=github-token='<token>' \
-#     --from-literal=gitlab-token='<token>'
+#     --from-literal=gitlab-token='<token>' \
+#     --from-literal=grafana-password='<a real password>'
 #
 # The tokens are optional - without them the extractors fall back to
 # unauthenticated access at a lower rate limit. Check what landed with:

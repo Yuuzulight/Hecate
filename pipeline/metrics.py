@@ -36,11 +36,6 @@ errors = Counter(
     ["type", "source"],
 )
 
-batch_size = Gauge(
-    "hecate_batch_size",
-    "Size of the batch currently being processed",
-)
-
 # - Read back off the database rather than counted as the pipeline runs. A
 #   scheduled job's counters die with its pod, so anything you want to look at
 #   between runs has to come from the stored data.

@@ -24,31 +24,21 @@ class GitHubExtractor(Extractor):
         return headers
 
     def fetch(self) -> list[dict]:
-        wanted = min(self.config.batch_size, MAX_RESULTS)
-        rows: list[dict] = []
-        page = 1
-
-        while len(rows) < wanted:
-            params = {
-                "q": f"stars:>{MIN_STARS}",
-                "sort": "stars",
-                "order": "desc",
-                "per_page": min(PER_PAGE, wanted - len(rows)),
-                "page": page,
-            }
-            response = self.session.get(
-                SEARCH_URL, params=params, headers=self._headers(), timeout=TIMEOUT
-            )
-            self._check(response)
-
-            items = response.json().get("items", [])
-            if not items:
-                break
-
-            rows.extend(self._transform_to_schema(item) for item in items)
-            page += 1
-
-        return rows[:wanted]
+        return self.paginate(
+            lambda page, remaining: {
+                "url": SEARCH_URL,
+                "headers": self._headers(),
+                "params": {
+                    "q": f"stars:>{MIN_STARS}",
+                    "sort": "stars",
+                    "order": "desc",
+                    # - The search API caps at 1000 results however you page it.
+                    "per_page": min(PER_PAGE, remaining, MAX_RESULTS),
+                    "page": page,
+                },
+            },
+            lambda response: response.json().get("items", []),
+        )
 
     def _check(self, response) -> None:
         """Turn a bad response into an ExtractError, saying so when it's the rate limit."""

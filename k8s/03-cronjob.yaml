@@ -37,6 +37,11 @@ spec:
     spec:
       backoffLimit: 3
       template:
+        metadata:
+          labels:
+            # - Gives the NetworkPolicy something stable to match on; job pods
+            #   otherwise only carry generated labels.
+            app: hecate-pipeline
         spec:
           restartPolicy: OnFailure
           containers:

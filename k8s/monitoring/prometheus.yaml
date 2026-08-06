@@ -50,9 +50,21 @@ spec:
           configMap:
             name: prometheus-config
         - name: data
-          # - Metrics do not survive a restart. Fine here; making them survive
-          #   means a PVC and a retention policy worth arguing about.
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: prometheus-data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: hecate
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      # - Sized against the 7 day retention above, not against ambition.
+      storage: 5Gi
 
 ---
 apiVersion: v1

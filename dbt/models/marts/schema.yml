@@ -1,4 +1,4 @@
-version: 2
+﻿version: 2
 
 models:
   - name: fct_repositories
@@ -89,15 +89,3 @@ models:
       - name: repository_count
         tests: [not_null]
 
-  - name: dim_dates
-    description: >
-      Daily spine from 2020-01-01 to today, so time series keep their gaps
-      visible instead of skipping the days nothing happened.
-    columns:
-      - name: date_key
-        description: YYYYMMDD as an integer.
-        tests: [not_null, unique]
-      - name: date_day
-        tests: [not_null, unique]
-      - name: is_weekend
-        tests: [not_null]

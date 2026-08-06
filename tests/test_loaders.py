@@ -1,4 +1,4 @@
-"""Loader: SQL wiring, batching, transactions, and error handling.
+﻿"""Loader: SQL wiring, batching, transactions, and error handling.
 
 These run against a stand-in connection. Whether the SQL is actually idempotent
 is a question a mock cannot answer, so that's checked against a real database in
@@ -12,7 +12,7 @@ import pytest
 
 from pipeline.config import Config
 from pipeline.exceptions import LoadError
-from pipeline.loaders import PostgreSQLLoader
+from pipeline.loader import PostgreSQLLoader
 
 ROW = {
     "id": "github_1",
@@ -51,7 +51,7 @@ def upserts(monkeypatch):
     """
     captured = []
     monkeypatch.setattr(
-        "pipeline.loaders.postgres.execute_values",
+        "pipeline.loader.execute_values",
         lambda cur, sql, values, **kwargs: captured.append((sql, values)),
     )
     return captured
@@ -151,7 +151,7 @@ def test_duplicate_ids_within_a_batch_are_collapsed(loader):
 
 
 def test_the_last_duplicate_wins(loader, upserts):
-    from pipeline.loaders.postgres import COLUMNS
+    from pipeline.loader import COLUMNS
 
     loader.load_repositories([ROW, dict(ROW, stars=999)])
     ((_, values),) = upserts
@@ -159,7 +159,7 @@ def test_the_last_duplicate_wins(loader, upserts):
 
 
 def test_values_are_sent_in_column_order(loader, upserts):
-    from pipeline.loaders.postgres import COLUMNS
+    from pipeline.loader import COLUMNS
 
     loader.load_repositories([ROW])
     ((_, values),) = upserts

@@ -70,8 +70,8 @@ Want to browse the data? `docker compose --profile tools up -d` adds pgAdmin on 
 ```
 pipeline/
   extractors/     one module per source, on a shared base
-  transformers/   normalisation everything passes through
-  loaders/        PostgreSQL, upsert-based
+  transformer.py  normalisation everything passes through
+  loader.py       PostgreSQL, upsert-based
   expectations.py data quality checks, run after load
   server.py       metrics endpoint
   main.py         wires it together

@@ -16,7 +16,9 @@ def test_every_metric_is_registered():
         "hecate_transform_duration_seconds",
         "hecate_load_duration_seconds",
         "hecate_errors",
-        "hecate_batch_size",
+        "hecate_repositories",
+        "hecate_last_extraction_age_seconds",
+        "hecate_quality_checks",
     }
     registered = {name for name in REGISTRY._names_to_collectors if name.startswith("hecate_")}
     assert expected <= registered

@@ -1,11 +1,11 @@
-"""Transformer: normalisation, validation, and what happens to bad records."""
+﻿"""Transformer: normalisation, validation, and what happens to bad records."""
 
 from datetime import datetime, timezone
 
 import pytest
 
 from pipeline.exceptions import TransformError
-from pipeline.transformers import RepositoryTransformer
+from pipeline.transformer import RepositoryTransformer
 
 VALID = {
     "id": "github_1",

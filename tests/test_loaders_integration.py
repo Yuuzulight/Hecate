@@ -1,4 +1,4 @@
-"""Idempotency, checked against a real PostgreSQL.
+﻿"""Idempotency, checked against a real PostgreSQL.
 
 Whether ON CONFLICT actually does what it's supposed to is not something a mock
 can tell you, so these run against a live database. Bring one up with
@@ -16,7 +16,7 @@ import psycopg2
 import pytest
 
 from pipeline.config import Config
-from pipeline.loaders import PostgreSQLLoader
+from pipeline.loader import PostgreSQLLoader
 
 pytestmark = pytest.mark.integration
 

@@ -64,6 +64,38 @@ class Extractor(ABC):
         )
         return rows
 
+    def paginate(self, page_params, read_page) -> list[dict]:
+        """Walk pages until batch_size is reached or a page comes back empty.
+
+        `page_params(page, remaining)` builds the query for one page and
+        `read_page(response)` pulls the records out of it - which is all that
+        actually differs between the two hosts that paginate this way.
+        """
+        wanted = self.config.batch_size
+        rows: list[dict] = []
+        page = 1
+
+        while len(rows) < wanted:
+            response = self.session.get(
+                **page_params(page, wanted - len(rows)), timeout=TIMEOUT
+            )
+            self._check(response)
+
+            records = read_page(response)
+            if not records:
+                break
+
+            rows.extend(self._transform_to_schema(record) for record in records)
+            page += 1
+
+        return rows[:wanted]
+
+    def _check(self, response) -> None:
+        """Turn a bad response into an ExtractError. Overridden where a source
+        distinguishes rate limiting from ordinary failure."""
+        if not response.ok:
+            raise ExtractError(f"{self.source}: returned {response.status_code}")
+
     @staticmethod
     def now() -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -71,7 +103,3 @@ class Extractor(ABC):
     @abstractmethod
     def fetch(self) -> list[dict]:
         """Return records from this source, already in the standard schema."""
-
-    @abstractmethod
-    def _transform_to_schema(self, raw: dict) -> dict:
-        """Map one record from this source's API shape to the standard schema."""

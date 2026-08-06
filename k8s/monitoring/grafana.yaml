@@ -83,15 +83,22 @@ spec:
             - name: web
               containerPort: 3000
           env:
-            # - Local demonstration, so anonymous viewing is on and there is no
-            #   login to set up. Turn both off before this is reachable by
-            #   anyone you did not invite.
+            # - Anonymous access is off, and the admin password comes from the
+            #   same secret as everything else. Turning it on for convenience
+            #   meant shipping a default of anonymous-with-admin-rights, which
+            #   is fine right up until the first time it is port-forwarded
+            #   somewhere shared.
             - name: GF_AUTH_ANONYMOUS_ENABLED
-              value: "true"
-            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
-              value: Admin
+              value: "false"
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: grafana-password
             - name: DB_USER
               valueFrom:
                 secretKeyRef:

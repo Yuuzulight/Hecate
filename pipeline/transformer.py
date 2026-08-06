@@ -43,7 +43,9 @@ def _timestamp(value) -> str | None:
 def _count(value) -> int:
     """Star and fork counts, coerced. Anything unusable counts as zero."""
     try:
-        count = int(value)
+        # - Via float, because int("1234.0") raises and a source reporting a
+        #   whole number with a decimal point should not silently read as zero.
+        count = int(float(value))
     except (TypeError, ValueError):
         return 0
     return max(count, 0)

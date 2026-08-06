@@ -1,4 +1,4 @@
-"""Metrics endpoint.
+﻿"""Metrics endpoint.
 
 The scheduled job's counters vanish when its pod exits, so anything you want to
 look at between runs has to be read back off the database. This serves
@@ -19,7 +19,7 @@ from prometheus_client import start_http_server
 from pipeline import metrics
 from pipeline.config import Config
 from pipeline.exceptions import HecateError, LoadError
-from pipeline.loaders import PostgreSQLLoader
+from pipeline.loader import PostgreSQLLoader
 from pipeline.logger import get_logger
 
 PORT = 8000
@@ -48,31 +48,53 @@ def refresh(loader: PostgreSQLLoader) -> dict:
     return seen
 
 
-def serve(config: Config, refresh_seconds: int = REFRESH_SECONDS, forever: bool = True) -> None:
+def serve(
+    config: Config,
+    refresh_seconds: int = REFRESH_SECONDS,
+    forever: bool = True,
+    cycles: int | None = None,
+) -> None:
+    """Serve /metrics, refreshing the database-backed gauges on a timer.
+
+    `cycles` bounds the loop so tests can watch it recover across iterations
+    without running until something kills them.
+    """
     log = get_logger("server")
     start_http_server(PORT)
     log.info("metrics endpoint listening", extra={"context": {"port": PORT}})
 
-    loader = PostgreSQLLoader(config)
-    loader.connect()
-    loader.create_tables()
-
+    loader = None
+    done = 0
     try:
         while True:
             try:
+                # - Reconnect if we have no connection, or lost the one we had.
+                #   Without this, a database restart left the loop failing
+                #   against a dead handle forever while the endpoint carried on
+                #   serving - so the pod stayed healthy, the gauges froze, and
+                #   the extraction-age metric that exists to catch a stalled
+                #   pipeline froze along with everything else.
+                if loader is None:
+                    loader = PostgreSQLLoader(config)
+                    loader.connect()
+                    loader.create_tables()
+
                 counts = refresh(loader)
                 log.info("gauges refreshed", extra={"context": {"sources": counts}})
             except LoadError as exc:
-                # - A database blip should not take the endpoint down with it.
-                #   Prometheus keeps scraping and the gauges just go stale.
                 metrics.errors.labels(type="database", source="postgres").inc()
                 log.error("refresh failed", extra={"context": {"error": str(exc)}})
+                if loader is not None:
+                    loader.close()
+                    loader = None
 
-            if not forever:
+            done += 1
+            if not forever or (cycles is not None and done >= cycles):
                 return
             time.sleep(refresh_seconds)
     finally:
-        loader.close()
+        if loader is not None:
+            loader.close()
 
 
 def main() -> int:

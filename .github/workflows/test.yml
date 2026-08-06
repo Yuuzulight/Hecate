@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# - Least privilege. Without this the job inherits the repository default,
+#   which is usually write, for something that only ever needs to read code.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

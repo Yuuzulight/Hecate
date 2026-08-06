@@ -105,7 +105,6 @@ class PostgreSQLLoader:
         rows = self._deduplicate(rows)
         values = [tuple(row.get(column) for column in COLUMNS) for row in rows]
 
-        metrics.batch_size.set(len(values))
         with metrics.load_duration.time():
             with self.transaction() as cur:
                 execute_values(cur, UPSERT, values, page_size=len(values))

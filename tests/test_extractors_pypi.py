@@ -47,7 +47,7 @@ def test_maps_metadata_to_the_standard_schema(config):
     extractor = PyPiExtractor(config)
     stub(extractor, [FakeResponse(PACKAGE)])
 
-    (row,) = extractor.fetch()
+    row = extractor.fetch()[0]
     assert row["id"] == "pypi_requests"
     assert row["source"] == "pypi"
     assert row["name"] == "requests"
@@ -99,13 +99,15 @@ def test_a_release_with_no_upload_time_is_skipped(config):
     assert extractor.fetch()[0]["created_at"] == "2020-01-01T00:00:00Z"
 
 
-def test_a_removed_package_is_skipped_not_fatal(config, monkeypatch):
-    monkeypatch.setenv("BATCH_SIZE", "2")
-    extractor = PyPiExtractor(Config())
-    stub(extractor, [FakeResponse(status_code=404), FakeResponse(PACKAGE)])
+def test_a_removed_package_is_skipped_not_fatal(config):
+    from pipeline.extractors.pypi import PACKAGES
+
+    extractor = PyPiExtractor(config)
+    # - First package 404s, the rest answer normally.
+    stub(extractor, [FakeResponse(status_code=404)])
 
     rows = extractor.fetch()
-    assert len(rows) == 1
+    assert len(rows) == len(PACKAGES) - 1
     assert rows[0]["name"] == "requests"
 
 
@@ -116,12 +118,17 @@ def test_a_server_error_is_an_extract_error(config):
         extractor.fetch()
 
 
-def test_batch_size_limits_how_many_packages_are_fetched(config, monkeypatch):
+def test_the_whole_seed_list_is_fetched_regardless_of_batch_size(config, monkeypatch):
+    # - Slicing by batch_size returned whichever packages happened to be listed
+    #   first, which is not a meaningful subset of anything. There is no ranking
+    #   here to slice by, so the list is the list.
+    from pipeline.extractors.pypi import PACKAGES
+
     monkeypatch.setenv("BATCH_SIZE", "3")
     extractor = PyPiExtractor(Config())
     calls = stub(extractor, [])
     extractor.fetch()
-    assert len(calls) == 3
+    assert len(calls) == len(PACKAGES)
 
 
 def test_the_configured_registry_is_used(config, monkeypatch):

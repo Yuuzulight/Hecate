@@ -26,34 +26,20 @@ class GitLabExtractor(Extractor):
         return {}
 
     def fetch(self) -> list[dict]:
-        wanted = self.config.batch_size
-        rows: list[dict] = []
-        page = 1
-
-        while len(rows) < wanted:
-            params = {
-                "order_by": "star_count",
-                "sort": "desc",
-                "visibility": "public",
-                "per_page": min(PER_PAGE, wanted - len(rows)),
-                "page": page,
-            }
-            response = self.session.get(
-                f"{BASE_URL}{PROJECTS_PATH}",
-                params=params,
-                headers=self._headers(),
-                timeout=TIMEOUT,
-            )
-            self._check(response)
-
-            projects = response.json()
-            if not projects:
-                break
-
-            rows.extend(self._transform_to_schema(project) for project in projects)
-            page += 1
-
-        return rows[:wanted]
+        return self.paginate(
+            lambda page, remaining: {
+                "url": f"{BASE_URL}{PROJECTS_PATH}",
+                "headers": self._headers(),
+                "params": {
+                    "order_by": "star_count",
+                    "sort": "desc",
+                    "visibility": "public",
+                    "per_page": min(PER_PAGE, remaining),
+                    "page": page,
+                },
+            },
+            lambda response: response.json(),
+        )
 
     def _check(self, response) -> None:
         if response.ok:

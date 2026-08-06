@@ -34,7 +34,6 @@ Only populated inside a job's own lifetime, so useful in logs and in a job's fin
 | `hecate_extract_duration_seconds` | histogram | `source` |
 | `hecate_transform_duration_seconds` | histogram | `source` |
 | `hecate_load_duration_seconds` | histogram | — |
-| `hecate_batch_size` | gauge | — |
 
 `stage` is one of extract, transform, load. `type` on the error counter is extract, transform, load or database.
 

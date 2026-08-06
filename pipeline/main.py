@@ -1,4 +1,4 @@
-"""Pipeline entry point.
+﻿"""Pipeline entry point.
 
 Runs each source in turn: extract, normalise, load. A source that fails is
 logged and counted and the run carries on with the rest, because one API having
@@ -17,9 +17,9 @@ from pipeline.extractors import (
     NpmExtractor,
     PyPiExtractor,
 )
-from pipeline.loaders import PostgreSQLLoader
+from pipeline.loader import PostgreSQLLoader
 from pipeline.logger import get_logger
-from pipeline.transformers import RepositoryTransformer
+from pipeline.transformer import RepositoryTransformer
 
 EXTRACTORS = (GitHubExtractor, NpmExtractor, PyPiExtractor, GitLabExtractor)
 

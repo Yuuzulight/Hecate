@@ -13,7 +13,6 @@ select
     min(language) as language_display,
 
     count(*) as repository_count,
-    count(distinct source) as source_count,
 
     -- - Star figures only count sources that have stars. A PyPI package sits
     --   at zero because the column has to hold something, not because nobody
@@ -26,8 +25,7 @@ select
     percentile_cont(0.5) within group (
         order by case when source in ('github', 'gitlab') then stars end
     )::numeric as median_stars,
-    max(stars) filter (where source in ('github', 'gitlab')) as max_stars,
-    sum(stars) filter (where source in ('github', 'gitlab')) as total_stars
+    max(stars) filter (where source in ('github', 'gitlab')) as max_stars
 
 from {{ ref('stg_repositories') }}
 where language_normalized is not null
