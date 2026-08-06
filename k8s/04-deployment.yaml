@@ -1,0 +1,90 @@
+# Metrics exporter, and the thing the autoscaler acts on.
+#
+# Worth being clear about what this is not: it does not run extractions. The
+# CronJob does that. This serves /metrics so Prometheus has a target that
+# outlives any single job pod, reading its gauges back off the database.
+#
+# Which means CPU-based autoscaling on it is a demonstration rather than a
+# response to real load - the work here is a query a minute. Left as specified,
+# with the HPA in 04-hpa.yaml, but do not read the replica count as a signal
+# about how much data is being collected.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hecate-metrics
+  namespace: hecate
+  labels:
+    app: hecate-metrics
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hecate-metrics
+  template:
+    metadata:
+      labels:
+        app: hecate-metrics
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: metrics
+          image: hecate:v1
+          imagePullPolicy: Never
+          command: ["python", "-m", "pipeline.server"]
+          ports:
+            - name: metrics
+              containerPort: 8000
+          env:
+            - name: DB_HOST
+              value: postgres.hecate.svc.cluster.local
+            - name: DB_NAME
+              value: hecate
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hecate-metrics
+  namespace: hecate
+  labels:
+    app: hecate-metrics
+spec:
+  selector:
+    app: hecate-metrics
+  ports:
+    - name: metrics
+      port: 8000
+      targetPort: 8000
