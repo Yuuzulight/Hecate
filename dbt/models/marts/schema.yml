@@ -1,0 +1,94 @@
+version: 2
+
+models:
+  - name: fct_repositories
+    description: >
+      One row per repository or package, keyed out to the dimensions. Built
+      incrementally on extracted_at and merged on repository_key.
+    columns:
+      - name: repository_key
+        description: Surrogate key over id and source.
+        tests: [not_null, unique]
+
+      - name: id
+        description: Natural key, source-prefixed.
+        tests: [not_null, unique]
+
+      - name: source_key
+        description: Joins to dim_sources.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_sources')
+                field: source_key
+
+      - name: language_key
+        description: >
+          Joins to dim_languages. Null where the source reports no language,
+          which is npm and GitLab in full and GitHub occasionally.
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_languages')
+                field: language_key
+
+      - name: stars
+        description: Zero for the package registries, which have no such idea.
+
+      - name: stars_per_fork
+        description: >
+          Stars divided by forks, to two places. Null when there are no forks,
+          and not worth reading for a package.
+
+      - name: popularity_tier
+        description: Null for sources that do not report stars.
+
+      - name: extracted_at
+        description: Drives the incremental filter.
+        tests: [not_null]
+
+  - name: dim_languages
+    description: >
+      One row per language with the spread of stars across it. Sourced from
+      GitHub and PyPI, the two that report a language.
+    columns:
+      - name: language_key
+        tests: [not_null, unique]
+      - name: language
+        description: Normalised - lowercased and trimmed.
+        tests: [not_null, unique]
+      - name: repository_count
+        tests: [not_null]
+      - name: median_stars
+        description: True median, not an average of the extremes.
+
+  - name: dim_sources
+    description: >
+      One row per source. The with_* columns double as a coverage report,
+      saying which fields each source actually populates.
+    columns:
+      - name: source_key
+        tests: [not_null, unique]
+      - name: source
+        tests:
+          - not_null
+          - unique
+          - accepted_values:
+              arguments:
+                values: ['github', 'npm', 'pypi', 'gitlab']
+      - name: repository_count
+        tests: [not_null]
+
+  - name: dim_dates
+    description: >
+      Daily spine from 2020-01-01 to today, so time series keep their gaps
+      visible instead of skipping the days nothing happened.
+    columns:
+      - name: date_key
+        description: YYYYMMDD as an integer.
+        tests: [not_null, unique]
+      - name: date_day
+        tests: [not_null, unique]
+      - name: is_weekend
+        tests: [not_null]

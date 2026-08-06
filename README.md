@@ -79,6 +79,10 @@ cd dbt && dbt run --profiles-dir . && dbt test --profiles-dir .
 
 Staging is a view over the raw table with the derived columns added — popularity banding, a normalised language, and days since last activity, which is the interesting one: a large number next to a high star count is roughly the shape of an abandoned project.
 
+On top of that sits a small star schema: `fct_repositories` with one row per project, joined out to `dim_languages`, `dim_sources` and a date spine. The fact table is incremental, so a re-run merges rather than appends.
+
+`dim_sources` is worth knowing about — as well as per-source totals it carries `with_stars`, `with_downloads` and `with_language` counts, so before you compare anything across sources you can see which of them actually reports the field you're about to compare on.
+
 ## Tests
 
 ```bash
