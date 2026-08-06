@@ -61,6 +61,10 @@ def loader(monkeypatch):
 
 def use(monkeypatch, *extractors):
     monkeypatch.setattr(main_module, "EXTRACTORS", tuple(extractors))
+    # - Cleared too, or run() builds the real mention extractors and calls a
+    #   live API. Nothing in this suite is allowed near the network, and the
+    #   only symptom was the run getting slower until CI timed out.
+    monkeypatch.setattr(main_module, "MENTION_EXTRACTORS", ())
 
 
 def test_a_record_survives_the_whole_trip(config, loader, monkeypatch):

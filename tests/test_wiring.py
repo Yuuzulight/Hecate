@@ -58,6 +58,14 @@ def test_mention_extractors_are_not_repository_extractors():
     assert not set(MENTION_EXTRACTORS) & set(EXTRACTORS)
 
 
+def test_the_default_registries_are_not_left_patched():
+    # - A guard against the reverse of the bug that made CI hang: tests clear
+    #   MENTION_EXTRACTORS to stay off the network, and a leaked patch would
+    #   mean the real pipeline silently stopped collecting mentions.
+    assert MENTION_EXTRACTORS, "MENTION_EXTRACTORS is empty outside a test patch"
+    assert EXTRACTORS, "EXTRACTORS is empty outside a test patch"
+
+
 def test_source_names_are_unique():
     names = [e.source for e in REGISTERED]
     assert len(names) == len(set(names))
