@@ -1,0 +1,1 @@
+"""Hecate: repository intelligence ETL."""

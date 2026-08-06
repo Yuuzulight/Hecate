@@ -1,0 +1,29 @@
+[project]
+name = "hecate"
+version = "0.1.0"
+description = "Repository intelligence platform: multi-source ETL over GitHub, npm, PyPI and GitLab"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "psycopg2-binary==2.9.12",
+    "requests==2.34.2",
+    "prometheus-client==0.26.0",
+    "python-dotenv==1.2.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# - Without this, pytest only finds the pipeline package when it happens to be
+#   run from the repo root.
+pythonpath = ["."]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pipeline*"]

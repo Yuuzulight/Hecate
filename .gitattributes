@@ -1,0 +1,2 @@
+# - Keep LF in the repo so files copied into the Linux image aren't CRLF.
+* text=auto eol=lf
