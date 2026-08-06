@@ -14,6 +14,7 @@ from pipeline.expectations import RepositoryExpectations
 from pipeline.extractors import (
     GitHubExtractor,
     GitLabExtractor,
+    HackerNewsExtractor,
     NpmExtractor,
     PyPiExtractor,
 )
@@ -22,6 +23,35 @@ from pipeline.logger import get_logger
 from pipeline.transformer import RepositoryTransformer
 
 EXTRACTORS = (GitHubExtractor, NpmExtractor, PyPiExtractor, GitLabExtractor)
+
+# - Kept apart from the above on purpose. These produce mentions, which are
+#   events about a repository rather than repositories, so they skip the
+#   transformer entirely and run after everything else - there has to be
+#   something stored before a link has anything to resolve against.
+MENTION_EXTRACTORS = (HackerNewsExtractor,)
+
+
+def resolve(loader: PostgreSQLLoader, mentions: list[dict]) -> list[dict]:
+    """Attach a repository id to each mention, dropping the ones that miss.
+
+    A story linking a project nobody here tracks is not an error - most of
+    Hacker News is about something else - so it is counted and discarded rather
+    than raised.
+    """
+    log = get_logger("main")
+    found = loader.resolve_urls({m["target_url"] for m in mentions})
+
+    resolved = []
+    for mention in mentions:
+        repository_id = found.get(mention["target_url"])
+        if repository_id:
+            resolved.append({**mention, "repository_id": repository_id})
+
+    log.info(
+        "mentions resolved",
+        extra={"context": {"matched": len(resolved), "of": len(mentions)}},
+    )
+    return resolved
 
 
 def run(config: Config) -> tuple[int, list[str]]:
@@ -64,6 +94,19 @@ def run(config: Config) -> tuple[int, list[str]]:
             except Exception as exc:
                 log.exception(
                     "quality check could not run",
+                    extra={"context": {"source": extractor.source, "error": str(exc)}},
+                )
+
+        # - After every repository source, so links have something to match.
+        for extractor_class in MENTION_EXTRACTORS:
+            extractor = extractor_class(config)
+            try:
+                mentions = resolve(loader, extractor.extract())
+                loader.load_mentions(mentions)
+            except Exception as exc:
+                failed.append(extractor.source)
+                log.exception(
+                    "source failed",
                     extra={"context": {"source": extractor.source, "error": str(exc)}},
                 )
     finally:

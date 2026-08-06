@@ -12,7 +12,9 @@ import pkgutil
 
 import pipeline.extractors
 from pipeline.extractors.base import Extractor
-from pipeline.main import EXTRACTORS
+from pipeline.main import EXTRACTORS, MENTION_EXTRACTORS
+
+REGISTERED = EXTRACTORS + MENTION_EXTRACTORS
 
 
 def implemented():
@@ -27,28 +29,35 @@ def implemented():
 
 
 def test_every_extractor_that_exists_is_wired_in():
-    missing = implemented() - set(EXTRACTORS)
+    missing = implemented() - set(REGISTERED)
     assert not missing, (
-        "written but never registered in main.EXTRACTORS: "
+        "written but never registered in main.EXTRACTORS or MENTION_EXTRACTORS: "
         + ", ".join(sorted(c.__name__ for c in missing))
     )
 
 
 def test_nothing_is_registered_twice():
-    assert len(EXTRACTORS) == len(set(EXTRACTORS))
+    assert len(REGISTERED) == len(set(REGISTERED))
 
 
 def test_every_registered_extractor_declares_a_source():
-    for extractor in EXTRACTORS:
+    for extractor in REGISTERED:
         assert getattr(extractor, "source", None), f"{extractor.__name__} has no source"
 
 
-def test_sources_are_the_ones_the_transformer_accepts():
+def test_repository_sources_are_the_ones_the_transformer_accepts():
+    # - Only the repository extractors go through the transformer. Mention
+    #   extractors bypass it entirely, so their source names are not required
+    #   to be in that list and would fail this if they were included.
     from pipeline.transformer import SOURCES
 
     assert {e.source for e in EXTRACTORS} <= set(SOURCES)
 
 
+def test_mention_extractors_are_not_repository_extractors():
+    assert not set(MENTION_EXTRACTORS) & set(EXTRACTORS)
+
+
 def test_source_names_are_unique():
-    names = [e.source for e in EXTRACTORS]
+    names = [e.source for e in REGISTERED]
     assert len(names) == len(set(names))

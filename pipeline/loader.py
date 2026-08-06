@@ -188,6 +188,21 @@ class PostgreSQLLoader:
         self.log.info("mentions loaded", extra={"context": {"rows": len(values)}})
         return len(values)
 
+    def resolve_urls(self, urls: set[str]) -> dict[str, str]:
+        """Map project URLs to the repository ids we store them under.
+
+        Compared lowercased, since the same project gets linked with every
+        capitalisation and only one row is going to match.
+        """
+        if not urls:
+            return {}
+        with self.transaction() as cur:
+            cur.execute(
+                "SELECT lower(url), id FROM raw_repositories WHERE lower(url) = ANY(%s)",
+                (list(urls),),
+            )
+            return {row[0]: row[1] for row in cur.fetchall()}
+
     def _known_repository_ids(self, ids: set[str]) -> set[str]:
         if not ids:
             return set()
