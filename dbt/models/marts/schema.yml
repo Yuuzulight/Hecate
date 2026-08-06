@@ -59,9 +59,18 @@ models:
         description: Normalised - lowercased and trimmed.
         tests: [not_null, unique]
       - name: repository_count
+        description: All rows in this language, whatever the source.
+        tests: [not_null]
+      - name: starred_count
+        description: >
+          How many of those rows come from a source that has stars. The star
+          figures below are computed over these only.
         tests: [not_null]
       - name: median_stars
-        description: True median, not an average of the extremes.
+        description: >
+          True median, not an average of the extremes, and restricted to
+          sources that report stars. Including package registries would pin it
+          to zero for any language with more packages than repositories.
 
   - name: dim_sources
     description: >
