@@ -35,9 +35,18 @@ ROW = {
 }
 
 
+#  - "0" and "false" are strings, and every non-empty string is truthy, so a
+#    plain truth test would have HECATE_INTEGRATION=0 turning these on.
+OFF = ("", "0", "false", "no", "off")
+
+
+def wanted() -> bool:
+    return os.environ.get("HECATE_INTEGRATION", "").strip().lower() not in OFF
+
+
 @pytest.fixture
 def loader():
-    if not os.environ.get("HECATE_INTEGRATION"):
+    if not wanted():
         pytest.skip("set HECATE_INTEGRATION=1 to run against a real database")
 
     loader = PostgreSQLLoader(Config())
