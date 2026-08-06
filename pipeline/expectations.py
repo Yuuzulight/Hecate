@@ -26,7 +26,7 @@ SOURCES = ("github", "npm", "pypi", "gitlab")
 STALE_AFTER = timedelta(hours=48)
 
 
-def _parsed(value):
+def _parsed(value) -> datetime | None:
     if isinstance(value, datetime):
         return value
     try:

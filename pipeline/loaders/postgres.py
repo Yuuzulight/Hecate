@@ -6,6 +6,7 @@ written get refreshed in place rather than duplicated, so there's no cleanup
 step and no need to work out where the last run stopped.
 """
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 import psycopg2
@@ -133,7 +134,7 @@ class PostgreSQLLoader:
         return list(unique.values())
 
     @contextmanager
-    def transaction(self):
+    def transaction(self) -> Iterator["psycopg2.extensions.cursor"]:
         """A cursor inside a transaction.
 
         psycopg2 connections already commit on a clean exit and roll back on an
