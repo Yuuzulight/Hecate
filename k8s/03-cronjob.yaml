@@ -1,0 +1,79 @@
+# Daily extraction run.
+#
+# imagePullPolicy is Never because this expects the image to already be on the
+# node. Docker Desktop's Kubernetes runs its own containerd, separate from the
+# Docker daemon, so a locally built image is not visible to it until you put it
+# there:
+#
+#   docker save hecate:v1 | docker exec -i desktop-control-plane \
+#     ctr -n k8s.io images import -
+#
+# Re-run that after every rebuild. The tag stays hecate:v1, so a stale copy on
+# the node keeps running happily and the only symptom is the pipeline quietly
+# doing less than it should - a run reporting one source instead of four.
+#
+# Against a real registry, drop the pull policy and use the full image
+# reference instead.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hecate-daily
+  namespace: hecate
+spec:
+  # 02:00 UTC, when the APIs are quiet.
+  schedule: "0 2 * * *"
+
+  # - A run that overruns should not have the next one land on top of it. Both
+  #   would be writing the same rows, and the upsert would have them fighting
+  #   over the same keys.
+  concurrencyPolicy: Forbid
+
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pipeline
+              image: hecate:v1
+              imagePullPolicy: Never
+              env:
+                - name: DB_HOST
+                  value: postgres.hecate.svc.cluster.local
+                - name: DB_NAME
+                  value: hecate
+                - name: DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: username
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: password
+                - name: GITHUB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: github-token
+                - name: GITLAB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: gitlab-token
+                - name: BATCH_SIZE
+                  value: "100"
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: "1"
+                  memory: 2Gi
