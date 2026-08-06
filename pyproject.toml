@@ -17,6 +17,9 @@ dev = ["pytest", "pytest-cov"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: needs a live PostgreSQL, skipped when there isn't one",
+]
 # - Without this, pytest only finds the pipeline package when it happens to be
 #   run from the repo root.
 pythonpath = ["."]
