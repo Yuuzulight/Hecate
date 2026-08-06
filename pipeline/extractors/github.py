@@ -64,7 +64,12 @@ class GitHubExtractor(Extractor):
             "forks": raw.get("forks_count", 0),
             "language": raw.get("language"),
             "created_at": raw.get("created_at"),
-            "updated_at": raw.get("updated_at"),
+            # - pushed_at, not updated_at. GitHub bumps updated_at whenever the
+            #   repository record changes at all, and that includes someone
+            #   starring it - so for anything popular it is always today, and
+            #   days_since_update measures attention rather than maintenance.
+            #   pushed_at is the last actual commit, which is the question.
+            "updated_at": raw.get("pushed_at") or raw.get("updated_at"),
             "description": raw.get("description"),
             "extracted_at": self.now(),
         }

@@ -19,6 +19,7 @@ REPO = {
     "language": "C++",
     "created_at": "2015-11-09T01:02:03Z",
     "updated_at": "2024-08-06T04:05:06Z",
+    "pushed_at": "2024-07-01T09:00:00Z",
     "description": "An open source machine learning framework",
 }
 
@@ -74,9 +75,17 @@ def test_fetch_maps_the_api_shape_to_the_standard_schema(config):
     assert row["forks"] == 74521
     assert row["language"] == "C++"
     assert row["created_at"] == "2015-11-09T01:02:03Z"
-    assert row["updated_at"] == "2024-08-06T04:05:06Z"
+    # - pushed_at, because updated_at moves when someone stars the repo.
+    assert row["updated_at"] == "2024-07-01T09:00:00Z"
     assert row["description"].startswith("An open source")
     assert row["extracted_at"].endswith("+00:00")
+
+
+def test_updated_at_falls_back_when_there_is_no_push(config):
+    extractor = GitHubExtractor(config)
+    without_push = {k: v for k, v in REPO.items() if k != "pushed_at"}
+    stub_session(extractor, [FakeResponse({"items": [without_push]})])
+    assert extractor.fetch()[0]["updated_at"] == "2024-08-06T04:05:06Z"
 
 
 def test_missing_optional_fields_do_not_raise(config):
