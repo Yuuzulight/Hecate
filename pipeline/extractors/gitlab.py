@@ -38,8 +38,20 @@ class GitLabExtractor(Extractor):
                     "page": page,
                 },
             },
-            lambda response: response.json(),
+            self._projects,
         )
+
+    def _projects(self, response) -> list:
+        """The project list, or a clear error if GitLab sent something else.
+
+        A 200 carrying an error object rather than a list would otherwise be
+        iterated as a dict, handing each field name to the row mapper and
+        failing with an AttributeError that says nothing useful.
+        """
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise ExtractError(f"gitlab: expected a list of projects, got {type(payload).__name__}")
+        return payload
 
     def _check(self, response) -> None:
         if response.ok:

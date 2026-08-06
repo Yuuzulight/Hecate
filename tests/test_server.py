@@ -1,4 +1,4 @@
-"""Metrics server: gauge refresh and staying up when the database wobbles."""
+﻿"""Metrics server: gauge refresh and staying up when the database wobbles."""
 
 from unittest.mock import MagicMock
 
@@ -68,9 +68,9 @@ def test_a_database_failure_does_not_bring_the_endpoint_down(config, monkeypatch
     labels = {"type": "database", "source": "postgres"}
     before = REGISTRY.get_sample_value("hecate_errors_total", labels) or 0
 
-    # - forever=False runs a single cycle, so a broken database is survived
-    #   rather than retried until the test times out.
-    server.serve(config, forever=False)
+    # - cycles bounds the loop, so a broken database is survived rather than
+    #   retried until the test times out.
+    server.serve(config, cycles=1)
 
     after = REGISTRY.get_sample_value("hecate_errors_total", labels)
     assert after - before == 1
@@ -83,7 +83,7 @@ def test_the_connection_is_closed_on_the_way_out(config, monkeypatch):
     monkeypatch.setattr(server, "PostgreSQLLoader", lambda config: stub)
     monkeypatch.setattr(server, "start_http_server", lambda port: None)
 
-    server.serve(config, forever=False)
+    server.serve(config, cycles=1)
     stub.connect.assert_called_once()
     stub.close.assert_called_once()
 
@@ -95,7 +95,7 @@ def test_it_serves_on_the_port_prometheus_expects(config, monkeypatch):
     monkeypatch.setattr(server, "PostgreSQLLoader", lambda config: stub)
     monkeypatch.setattr(server, "start_http_server", lambda port: seen.update(port=port))
 
-    server.serve(config, forever=False)
+    server.serve(config, cycles=1)
     assert seen["port"] == 8000
 
 
@@ -111,9 +111,53 @@ def test_an_unreachable_database_is_retried_rather_than_fatal(config, monkeypatc
 
     labels = {"type": "database", "source": "postgres"}
     before = REGISTRY.get_sample_value("hecate_errors_total", labels) or 0
-    server.serve(config, forever=False)
+    server.serve(config, cycles=1)
     after = REGISTRY.get_sample_value("hecate_errors_total", labels)
     assert after - before == 1
+
+
+def test_a_source_that_disappears_stops_being_reported(loader):
+    # - A gauge holds its last value until something clears it, so without this
+    #   a source whose rows were deleted would keep reporting the count it had
+    #   when it vanished.
+    rows_on(loader, [("github", 100, 30.0), ("gone", 7, 10.0)])
+    server.refresh(loader)
+    assert REGISTRY.get_sample_value("hecate_repositories", {"source": "gone"}) == 7
+
+    rows_on(loader, [("github", 100, 30.0)])
+    server.refresh(loader)
+    assert REGISTRY.get_sample_value("hecate_repositories", {"source": "gone"}) is None
+    assert REGISTRY.get_sample_value(
+        "hecate_last_extraction_age_seconds", {"source": "gone"}
+    ) is None
+    # - The ones still present are untouched.
+    assert REGISTRY.get_sample_value("hecate_repositories", {"source": "github"}) == 100
+
+
+def test_the_exporter_does_not_create_schema(config, monkeypatch):
+    # - It only reads. The pipeline owns the schema, and an exporter issuing
+    #   DDL on every reconnect is privilege it has no use for.
+    stub = MagicMock()
+    stub.transaction.return_value.__enter__.return_value.fetchall.return_value = []
+    monkeypatch.setattr(server, "PostgreSQLLoader", lambda config: stub)
+    monkeypatch.setattr(server, "start_http_server", lambda port: None)
+
+    server.serve(config, cycles=1)
+    stub.create_tables.assert_not_called()
+
+
+def test_main_returns_zero_when_interrupted(config, monkeypatch):
+    monkeypatch.setattr(server, "start_http_server", lambda port: None)
+    monkeypatch.setattr(server, "serve", lambda cfg: (_ for _ in ()).throw(KeyboardInterrupt))
+    assert server.main() == 0
+
+
+def test_main_reports_failure_on_a_configuration_problem(monkeypatch):
+    from pipeline.exceptions import ConfigError
+
+    monkeypatch.setattr(server, "start_http_server", lambda port: None)
+    monkeypatch.setattr(server, "Config", lambda: (_ for _ in ()).throw(ConfigError("no DB_PASSWORD")))
+    assert server.main() == 1
 
 
 def test_a_dropped_connection_is_replaced_on_the_next_cycle(config, monkeypatch):
@@ -131,7 +175,7 @@ def test_a_dropped_connection_is_replaced_on_the_next_cycle(config, monkeypatch)
     monkeypatch.setattr(server, "PostgreSQLLoader", build)
     monkeypatch.setattr(server, "start_http_server", lambda port: None)
 
-    server.serve(config, refresh_seconds=0, forever=True, cycles=2)
+    server.serve(config, refresh_seconds=0, cycles=2)
 
     assert len(built) == 2, "a failed connection should be rebuilt, not reused"
     built[0].close.assert_called_once()

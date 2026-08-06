@@ -25,7 +25,10 @@ REPO = {
 
 class FakeResponse:
     def __init__(self, payload=None, status_code=200, headers=None):
-        self._payload = payload or {}
+        # - Not `payload or {}`. An empty list is falsy, so that turned every
+        #   "no more results" response into a dict, which is a different shape
+        #   from anything the real API returns.
+        self._payload = {} if payload is None else payload
         self.status_code = status_code
         self.headers = headers or {}
 

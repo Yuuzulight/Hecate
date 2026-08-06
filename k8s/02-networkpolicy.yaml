@@ -1,9 +1,9 @@
 # Without this, any pod anywhere in the cluster can open a connection to the
-# database. These policies close that down to the two workloads that need it.
+# database. This closes it to the three workloads that need one.
 #
-# Note that NetworkPolicy needs a CNI that enforces it. Docker Desktop's
-# built-in cluster does not, so applying this there is a no-op rather than a
-# protection - check with a test pod before relying on it.
+# NetworkPolicy needs a CNI that enforces it. Docker Desktop's built-in cluster
+# does not, so applying this there is documentation rather than protection -
+# check with a test pod before relying on it.
 
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -17,10 +17,11 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        # - The scheduled extraction job.
+        # - The scheduled extraction job. Its pods carry this label from the
+        #   job template; there is no stable generated label to match on.
         - podSelector:
             matchLabels:
-              job-name-prefix: hecate
+              app: hecate-pipeline
         # - The metrics exporter.
         - podSelector:
             matchLabels:
@@ -29,28 +30,6 @@ spec:
         - podSelector:
             matchLabels:
               app: grafana
-      ports:
-        - protocol: TCP
-          port: 5432
-
----
-# The CronJob's pods get labels from the job template rather than a stable app
-# label, so they are matched separately.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: postgres-from-pipeline
-  namespace: hecate
-spec:
-  podSelector:
-    matchLabels:
-      app: postgres
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: hecate-pipeline
       ports:
         - protocol: TCP
           port: 5432

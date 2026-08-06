@@ -137,6 +137,15 @@ def test_a_rejected_token_says_so(config):
         extractor.fetch()
 
 
+def test_an_error_object_instead_of_a_list_is_reported_clearly(config):
+    # - A 200 carrying a dict would otherwise be iterated as field names and
+    #   fail with an AttributeError that says nothing about what went wrong.
+    extractor = GitLabExtractor(config)
+    stub(extractor, [FakeResponse({"message": "403 Forbidden"})])
+    with pytest.raises(ExtractError, match="expected a list of projects"):
+        extractor.fetch()
+
+
 def test_other_failures_surface_as_extract_errors(config):
     extractor = GitLabExtractor(config)
     stub(extractor, [FakeResponse(status_code=503)])

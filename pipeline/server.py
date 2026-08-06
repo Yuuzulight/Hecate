@@ -34,6 +34,15 @@ GROUP BY source
 """
 
 
+GAUGES = (metrics.repositories, metrics.last_extraction_age)
+
+# - Sources reported last time round. A gauge keeps whatever it was last set to
+#   until something clears it, so a source whose rows go away would otherwise
+#   carry on reporting its final count forever - a metric outliving the data it
+#   describes, which is worse than no metric.
+_reported: set[str] = set()
+
+
 def refresh(loader: PostgreSQLLoader) -> dict:
     """Pull current row counts and extraction ages into the gauges."""
     with loader.transaction() as cur:
@@ -45,19 +54,25 @@ def refresh(loader: PostgreSQLLoader) -> dict:
         metrics.repositories.labels(source=source).set(count)
         metrics.last_extraction_age.labels(source=source).set(age or 0)
         seen[source] = count
+
+    for gone in _reported - seen.keys():
+        for gauge in GAUGES:
+            gauge.remove(gone)
+    _reported.clear()
+    _reported.update(seen)
+
     return seen
 
 
 def serve(
     config: Config,
     refresh_seconds: int = REFRESH_SECONDS,
-    forever: bool = True,
     cycles: int | None = None,
 ) -> None:
     """Serve /metrics, refreshing the database-backed gauges on a timer.
 
-    `cycles` bounds the loop so tests can watch it recover across iterations
-    without running until something kills them.
+    Runs until stopped. `cycles` bounds the loop instead, so tests can watch it
+    recover across iterations without running until something kills them.
     """
     log = get_logger("server")
     start_http_server(PORT)
@@ -77,8 +92,10 @@ def serve(
                 if loader is None:
                     loader = PostgreSQLLoader(config)
                     loader.connect()
-                    loader.create_tables()
 
+                # - No create_tables here. This only reads; the pipeline owns
+                #   the schema. Against an empty database the query fails, gets
+                #   counted, and is retried, which is the honest outcome.
                 counts = refresh(loader)
                 log.info("gauges refreshed", extra={"context": {"sources": counts}})
             except LoadError as exc:
@@ -89,7 +106,7 @@ def serve(
                     loader = None
 
             done += 1
-            if not forever or (cycles is not None and done >= cycles):
+            if cycles is not None and done >= cycles:
                 return
             time.sleep(refresh_seconds)
     finally:
