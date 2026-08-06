@@ -44,6 +44,12 @@ def wanted() -> bool:
     return os.environ.get("HECATE_INTEGRATION", "").strip().lower() not in OFF
 
 
+#  - These tests truncate between cases, so they get their own schema. Pointing
+#    them at the default one meant `pytest` quietly emptied whatever the
+#    pipeline had just collected.
+TEST_SCHEMA = "hecate_test"
+
+
 @pytest.fixture
 def loader():
     if not wanted():
@@ -51,6 +57,14 @@ def loader():
 
     loader = PostgreSQLLoader(Config())
     loader.connect()
+
+    with loader.conn.cursor() as cur:
+        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {TEST_SCHEMA}")
+        # - Everything on this connection now resolves here, including the
+        #   loader's own CREATE TABLE and upserts.
+        cur.execute(f"SET search_path TO {TEST_SCHEMA}")
+    loader.conn.commit()
+
     loader.create_tables()
     with loader.conn.cursor() as cur:
         cur.execute("TRUNCATE raw_repositories")
@@ -153,9 +167,17 @@ def test_a_source_without_downloads_stores_null_not_zero(loader):
     assert query(loader, "SELECT downloads FROM raw_repositories")[0][0] is None
 
 
+def test_these_tests_do_not_touch_the_real_table(loader):
+    # - The guard for the whole file: if search_path ever stops pointing at the
+    #   test schema, this fails before anything gets truncated for real.
+    assert query(loader, "SELECT current_schema()")[0][0] == TEST_SCHEMA
+
+
 def test_the_indexes_exist(loader):
     names = {row[0] for row in query(
-        loader, "SELECT indexname FROM pg_indexes WHERE tablename = 'raw_repositories'"
+        loader,
+        f"SELECT indexname FROM pg_indexes WHERE tablename = 'raw_repositories' "
+        f"AND schemaname = '{TEST_SCHEMA}'",
     )}
     assert "idx_raw_repositories_source" in names
     assert "idx_raw_repositories_extracted_at" in names

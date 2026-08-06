@@ -1,0 +1,80 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Tables written directly by the extraction pipeline.
+    schema: public
+    tables:
+      - name: raw_repositories
+        description: >
+          One row per repository or package, upserted on every run. id is the
+          primary key, so a re-run refreshes rather than appends.
+        columns:
+          - name: id
+            tests: [not_null, unique]
+
+models:
+  - name: stg_repositories
+    description: >
+      Raw extract with the fields that need computing added. A view, because it
+      is a thin pass over the raw table and a materialised copy would only go
+      stale between pipeline runs.
+    columns:
+      - name: id
+        description: "Source-prefixed identifier, e.g. github_123456."
+        tests: [not_null, unique]
+
+      - name: source
+        description: Which registry or host the row came from.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['github', 'npm', 'pypi', 'gitlab']
+
+      - name: name
+        description: Repository slug or package name.
+        tests: [not_null]
+
+      - name: url
+        description: Canonical page for the project.
+        tests: [not_null]
+
+      - name: stars
+        description: >
+          Star count. Zero for npm and PyPI, which have no such concept - use
+          popularity_tier, which is null for those sources rather than lowest.
+
+      - name: forks
+        description: Fork count, zero for the package registries.
+
+      - name: downloads
+        description: >
+          Weekly downloads where the source reports them, which today is npm
+          only. Null means the source publishes no figure, not zero installs.
+
+      - name: popularity_tier
+        description: >
+          Banding by stars, for github and gitlab only. Null elsewhere.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['exceptional', 'high', 'moderate', 'emerging']
+
+      - name: language
+        description: As reported by the source, where it reports one at all.
+
+      - name: language_normalized
+        description: Lowercased and trimmed, null when blank. Group on this.
+
+      - name: creation_year
+        description: Year of first publication, where the source exposes it.
+
+      - name: days_since_update
+        description: >
+          Days since the last activity. The maintenance signal - a large number
+          next to a high star count is the shape of an abandoned project.
+
+      - name: extracted_at
+        description: When the pipeline read this record from its source.
+        tests: [not_null]

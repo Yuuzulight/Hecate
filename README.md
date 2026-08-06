@@ -65,6 +65,20 @@ docker build -t hecate:v1 . && docker run --rm --network hecate_default -e DB_HO
 
 Want to browse the data? `docker compose --profile tools up -d` adds pgAdmin on port 5050.
 
+## Analytics
+
+The dbt models live in `dbt/` and read from the table the pipeline writes. Install them as an extra and point dbt at the profile in the project:
+
+```bash
+pip install -e ".[dbt]"
+```
+
+```bash
+cd dbt && dbt run --profiles-dir . && dbt test --profiles-dir .
+```
+
+Staging is a view over the raw table with the derived columns added — popularity banding, a normalised language, and days since last activity, which is the interesting one: a large number next to a high star count is roughly the shape of an abandoned project.
+
 ## Tests
 
 ```bash
