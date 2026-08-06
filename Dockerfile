@@ -31,6 +31,6 @@ USER hecate
 # - Only meaningful for the long-running deployment. The scheduled job runs once
 #   and exits, and a container that has finished has nothing left to check.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python -c "from pipeline.config import Config; from pipeline.loaders import PostgreSQLLoader; loader = PostgreSQLLoader(Config()); loader.connect(); loader.close()" || exit 1
+    CMD python -c "from pipeline.config import Config; from pipeline.loader import PostgreSQLLoader; loader = PostgreSQLLoader(Config()); loader.connect(); loader.close()" || exit 1
 
 CMD ["python", "-m", "pipeline.main"]
