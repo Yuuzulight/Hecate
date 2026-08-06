@@ -1,0 +1,94 @@
+# PostgreSQL as a StatefulSet, so the pod keeps its volume across restarts.
+#
+# The headless service gives it a stable DNS name inside the cluster:
+#   postgres.hecate.svc.cluster.local
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: hecate
+  labels:
+    app: postgres
+spec:
+  # - Headless. Nothing needs to load balance across a single database, and a
+  #   stable per-pod name is more useful than a virtual IP.
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: hecate
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: hecate
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+            # - The image writes into a subdirectory rather than the mount root,
+            #   which otherwise contains lost+found and makes initdb refuse.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "dataflow", "-d", "hecate"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "dataflow", "-d", "hecate"]
+            # - Generous, because a slow startup restarting the pod mid-initdb
+            #   is a good way to corrupt a fresh volume.
+            initialDelaySeconds: 45
+            periodSeconds: 15
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

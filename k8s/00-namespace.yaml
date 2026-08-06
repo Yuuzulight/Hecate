@@ -1,0 +1,24 @@
+# Namespace only. The secret is deliberately not in here.
+#
+# A secret manifest with placeholder values is one `kubectl apply -f k8s/` away
+# from being a real deployment running on a password someone meant to change.
+# Create it directly instead, so the values only ever exist in the cluster:
+#
+#   kubectl create secret generic db-secret \
+#     --namespace hecate \
+#     --from-literal=username=dataflow \
+#     --from-literal=password='<a real password>' \
+#     --from-literal=github-token='<token>' \
+#     --from-literal=gitlab-token='<token>'
+#
+# The tokens are optional - without them the extractors fall back to
+# unauthenticated access at a lower rate limit. Check what landed with:
+#
+#   kubectl get secret db-secret -n hecate -o jsonpath='{.data}'
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hecate
+  labels:
+    app.kubernetes.io/name: hecate
