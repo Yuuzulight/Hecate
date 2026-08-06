@@ -92,7 +92,7 @@ class PostgreSQLLoader:
         self.log.info("connected", extra={"context": {"target": self._target()}})
 
     def create_tables(self) -> None:
-        with self._transaction() as cur:
+        with self.transaction() as cur:
             cur.execute(CREATE_TABLE)
         self.log.info("schema ready")
 
@@ -106,7 +106,7 @@ class PostgreSQLLoader:
 
         metrics.batch_size.set(len(values))
         with metrics.load_duration.time():
-            with self._transaction() as cur:
+            with self.transaction() as cur:
                 execute_values(cur, UPSERT, values, page_size=len(values))
 
         metrics.rows_processed.labels(stage="load", source="postgres").inc(len(values))
@@ -133,7 +133,7 @@ class PostgreSQLLoader:
         return list(unique.values())
 
     @contextmanager
-    def _transaction(self):
+    def transaction(self):
         """A cursor inside a transaction.
 
         psycopg2 connections already commit on a clean exit and roll back on an

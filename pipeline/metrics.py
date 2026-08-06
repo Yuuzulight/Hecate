@@ -40,3 +40,18 @@ batch_size = Gauge(
     "hecate_batch_size",
     "Size of the batch currently being processed",
 )
+
+# - Read back off the database rather than counted as the pipeline runs. A
+#   scheduled job's counters die with its pod, so anything you want to look at
+#   between runs has to come from the stored data.
+repositories = Gauge(
+    "hecate_repositories",
+    "Rows currently stored, by source",
+    ["source"],
+)
+
+last_extraction_age = Gauge(
+    "hecate_last_extraction_age_seconds",
+    "Seconds since this source was last extracted successfully",
+    ["source"],
+)
