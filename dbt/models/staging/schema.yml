@@ -13,6 +13,15 @@ sources:
           - name: id
             tests: [not_null, unique]
 
+      - name: social_mentions
+        description: >
+          One row per post that links a tracked repository. A different grain
+          from the table above - a post is an event about a project, not a
+          project - which is why it lives separately.
+        columns:
+          - name: id
+            tests: [not_null, unique]
+
 models:
   - name: stg_repositories
     description: >

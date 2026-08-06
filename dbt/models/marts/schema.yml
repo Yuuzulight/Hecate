@@ -48,6 +48,29 @@ models:
         description: Drives the incremental filter.
         tests: [not_null]
 
+  - name: fct_repository_mentions
+    description: >
+      Attention per repository per week, weighted so recent posts outrank old
+      ones. Repositories nobody has posted about are absent rather than zero.
+    columns:
+      - name: mention_week_key
+        tests: [not_null, unique]
+      - name: repository_id
+        description: Joins to fct_repositories on its natural key.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_repositories')
+                field: id
+      - name: posts
+        tests: [not_null]
+      - name: decayed_score
+        description: >
+          Score with a fortnight half-life applied. Comparable between
+          repositories in the same week, not across distant weeks.
+        tests: [not_null]
+
   - name: dim_languages
     description: >
       One row per language with the spread of stars across it. Sourced from
