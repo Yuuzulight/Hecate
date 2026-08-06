@@ -138,3 +138,16 @@ Roughly in order of what would add most:
 3. Language and a real push date for GitLab, if the extra request per project turns out to be affordable — it would fix two limitations at once
 4. Alerting on extraction age, since a job that silently stops running is the most likely real failure
 5. A Pushgateway, if per-run timing is ever worth having. The extract, transform and load histograms are recorded inside a pod that exits in seconds, so nothing ever scrapes them
+6. YouTube. Tutorial volume is a genuine adoption signal and the API is free, but tying a video to a repository is much harder than tying a link post to one — the title and description rarely carry a URL. Worth attempting only once name-based matching has a measured false-positive rate to borrow from, otherwise it is guesswork wearing a number
+
+## Attention, as distinct from adoption
+
+Stars are cumulative and lagging. `atom` still carries sixty thousand of them three years after being formally sunset, and downloads measure entrenchment rather than interest. Neither answers what is happening right now, which is a question this project claims to answer and currently cannot.
+
+Social mentions are the missing leading indicator: a library with eight hundred stars and an active thread this week is a different object from one with eight hundred stars and silence.
+
+Posts don't belong in `raw_repositories` though. Every row there is an artifact with an identity; a post is an *event about* one, which is a different grain. They get their own table with a foreign key back, and the repository picks up aggregates rather than raw posts.
+
+The harder half is knowing what a post refers to. Matching on a link is reliable and covers most technical posts. Matching on a name is not — `requests` is a PyPI package, a GitHub repository, and an ordinary English word, and a fuzzy match would attach attention to the wrong project quietly and plausibly. So link matching first, and name matching only once the link-resolved set can serve as ground truth to measure the error rate against.
+
+This also forces the snapshot table. A mention count without a time dimension cannot distinguish one viral post from sustained interest, so the history that growth rate and trend score always needed stops being optional.
