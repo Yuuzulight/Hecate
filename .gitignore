@@ -20,3 +20,4 @@ dbt/logs/
 
 .idea/
 .vscode/
+dbt/.user.yml
