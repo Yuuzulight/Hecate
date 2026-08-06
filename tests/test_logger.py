@@ -49,9 +49,11 @@ def test_logger_is_attached_to_the_hecate_tree():
     log = get_logger("check")
     assert log.name == "hecate.check"
     root = logging.getLogger("hecate")
-    # - One handler, and propagate off, or every line would be emitted twice.
-    assert len(root.handlers) == 1
+    # - propagate stays off, or every line would also be emitted by the root
+    #   logger. pytest attaches capture handlers of its own here, so check that
+    #   ours is among them rather than counting.
     assert root.propagate is False
+    assert any(isinstance(h.formatter, JsonFormatter) for h in root.handlers)
 
 
 def test_names_outside_the_hecate_tree_are_still_reparented():

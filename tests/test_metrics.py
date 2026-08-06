@@ -23,8 +23,10 @@ def test_every_metric_is_registered():
 
 
 def test_counters_record_against_their_labels():
-    metrics.rows_processed.labels(stage="extract", source="github").inc(5)
-    value = REGISTRY.get_sample_value(
-        "hecate_rows_processed_total", {"stage": "extract", "source": "github"}
-    )
-    assert value == 5
+    # - Collectors are module-level singletons shared with every other test, so
+    #   this has to measure the change, not the total.
+    labels = {"stage": "extract", "source": "github"}
+    before = REGISTRY.get_sample_value("hecate_rows_processed_total", labels) or 0
+    metrics.rows_processed.labels(**labels).inc(5)
+    after = REGISTRY.get_sample_value("hecate_rows_processed_total", labels)
+    assert after - before == 5
