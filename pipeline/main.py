@@ -10,6 +10,7 @@ import sys
 
 from pipeline.config import Config
 from pipeline.exceptions import HecateError
+from pipeline.expectations import RepositoryExpectations
 from pipeline.extractors import (
     GitHubExtractor,
     GitLabExtractor,
@@ -27,6 +28,7 @@ def run(config: Config) -> tuple[int, list[str]]:
     """Run every source. Returns rows loaded and the sources that failed."""
     log = get_logger("main")
     transformer = RepositoryTransformer()
+    expectations = RepositoryExpectations()
     loader = PostgreSQLLoader(config)
 
     loaded = 0
@@ -42,6 +44,10 @@ def run(config: Config) -> tuple[int, list[str]]:
                 records = extractor.extract()
                 rows = transformer.transform_all(records, extractor.source)
                 loaded += loader.load_repositories(rows)
+                # - Reports on what landed. Deliberately does not gate the run:
+                #   suspect data is worth looking at, not worth discarding a
+                #   day's collection over.
+                expectations.validate(rows)
             except Exception as exc:
                 # - Broad on purpose. An unexpected shape coming back from one
                 #   registry should cost that source, not the other three, and a

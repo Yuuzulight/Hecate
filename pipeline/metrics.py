@@ -50,6 +50,12 @@ repositories = Gauge(
     ["source"],
 )
 
+quality_checks = Counter(
+    "hecate_quality_checks_total",
+    "Data quality checks run after load, by check and outcome",
+    ["check", "outcome"],
+)
+
 last_extraction_age = Gauge(
     "hecate_last_extraction_age_seconds",
     "Seconds since this source was last extracted successfully",
