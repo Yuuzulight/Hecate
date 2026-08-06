@@ -1,0 +1,26 @@
+name: 'hecate'
+version: '1.0.0'
+config-version: 2
+profile: 'hecate'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  hecate:
+    # - Staging stays as views: it is a thin clean-up over raw_repositories and
+    #   materialising it would mean a second copy going stale between runs.
+    staging:
+      +materialized: view
+      +schema: staging
+    # - Marts are what gets queried by dashboards, so they are worth building.
+    marts:
+      +materialized: table
+      +schema: marts

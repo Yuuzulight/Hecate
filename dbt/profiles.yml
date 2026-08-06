@@ -1,0 +1,31 @@
+# Connection settings, read from the environment - the same variables the
+# pipeline uses, so there is one place to change them.
+#
+# dbt looks for this file in ~/.dbt by default, so point it here:
+#
+#   dbt debug --profiles-dir .
+#
+# or set DBT_PROFILES_DIR=dbt once and drop the flag.
+#
+# DB_PASSWORD has no fallback here, so nothing in this repo ships a password.
+#
+# Worth knowing before you rely on that: a wrong DB_PASSWORD fails the
+# connection as you would expect, but leaving it unset entirely still connected
+# in local testing against the compose database. So treat the missing-variable
+# case as unverified rather than as a guard - if this ever runs anywhere that
+# matters, check the target it actually reached rather than trusting that an
+# absent password would have stopped it.
+
+hecate:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DB_HOST', 'localhost') }}"
+      port: "{{ env_var('DB_PORT', '5432') | int }}"
+      user: "{{ env_var('DB_USER', 'dataflow') }}"
+      password: "{{ env_var('DB_PASSWORD') }}"
+      dbname: "{{ env_var('DB_NAME', 'hecate') }}"
+      schema: analytics
+      threads: 4
+      keepalives_idle: 0
