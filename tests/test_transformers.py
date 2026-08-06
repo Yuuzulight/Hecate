@@ -73,6 +73,19 @@ def test_optional_fields_may_be_missing(transformer):
     assert row["created_at"] is None
 
 
+def test_downloads_stay_empty_when_the_source_has_no_such_metric(transformer):
+    # - Distinct from zero downloads, which is a claim about the package.
+    assert transformer.transform(VALID)["downloads"] is None
+
+
+def test_downloads_are_kept_when_present(transformer):
+    assert transformer.transform(dict(VALID, downloads=422616954))["downloads"] == 422616954
+
+
+def test_nonsense_downloads_become_zero_not_none(transformer):
+    assert transformer.transform(dict(VALID, downloads="lots"))["downloads"] == 0
+
+
 def test_counts_default_to_zero(transformer):
     row = transformer.transform(dict(VALID, stars=None, forks="nonsense"))
     assert row["stars"] == 0

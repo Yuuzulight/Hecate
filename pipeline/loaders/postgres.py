@@ -18,9 +18,13 @@ from pipeline.logger import get_logger
 
 COLUMNS = (
     "id", "source", "name", "url", "stars", "forks", "language",
-    "created_at", "updated_at", "description", "extracted_at",
+    "created_at", "updated_at", "description", "downloads", "extracted_at",
 )
 
+# - downloads stays nullable rather than defaulting to zero. GitHub and GitLab
+#   don't report one at all, and "no such metric" is a different thing from "no
+#   downloads" - collapsing them would quietly drag every average down.
+#   BIGINT because the busiest packages clear a billion a month.
 CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS raw_repositories (
     id VARCHAR PRIMARY KEY,
@@ -33,9 +37,13 @@ CREATE TABLE IF NOT EXISTS raw_repositories (
     created_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ,
     description TEXT,
+    downloads BIGINT,
     extracted_at TIMESTAMPTZ NOT NULL,
     loaded_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- - For databases created before downloads existed.
+ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS downloads BIGINT;
 
 CREATE INDEX IF NOT EXISTS idx_raw_repositories_source
     ON raw_repositories(source);
@@ -57,6 +65,7 @@ ON CONFLICT (id) DO UPDATE SET
     language = EXCLUDED.language,
     updated_at = EXCLUDED.updated_at,
     description = EXCLUDED.description,
+    downloads = EXCLUDED.downloads,
     extracted_at = EXCLUDED.extracted_at,
     loaded_at = NOW()
 """

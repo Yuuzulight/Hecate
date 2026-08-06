@@ -77,6 +77,10 @@ class RepositoryTransformer:
             "created_at": _timestamp(record.get("created_at")),
             "updated_at": _timestamp(record.get("updated_at")),
             "description": _text(record.get("description")),
+            # - Left as None when the source has no such metric, rather than
+            #   coerced to zero. GitHub reporting no downloads is not the same
+            #   claim as a package nobody installs.
+            "downloads": None if record.get("downloads") is None else _count(record.get("downloads")),
             "extracted_at": _timestamp(record.get("extracted_at")),
         }
 

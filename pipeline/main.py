@@ -10,13 +10,13 @@ import sys
 
 from pipeline.config import Config
 from pipeline.exceptions import HecateError
-from pipeline.extractors import GitHubExtractor
+from pipeline.extractors import GitHubExtractor, NpmExtractor
 from pipeline.loaders import PostgreSQLLoader
 from pipeline.logger import get_logger
 from pipeline.transformers import RepositoryTransformer
 
 # - Sources get added here as their extractors land.
-EXTRACTORS = (GitHubExtractor,)
+EXTRACTORS = (GitHubExtractor, NpmExtractor)
 
 
 def run(config: Config) -> tuple[int, list[str]]:

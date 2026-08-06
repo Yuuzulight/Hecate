@@ -141,6 +141,18 @@ def test_a_bad_row_rolls_the_whole_batch_back(loader):
     assert count(loader) == 1
 
 
+def test_downloads_survive_a_round_trip(loader):
+    # - BIGINT, because weekly figures for the busiest packages run into the
+    #   hundreds of millions and monthly clears a billion.
+    loader.load_repositories([dict(ROW, id="npm_tslib", source="npm", downloads=1699733117)])
+    assert query(loader, "SELECT downloads FROM raw_repositories")[0][0] == 1699733117
+
+
+def test_a_source_without_downloads_stores_null_not_zero(loader):
+    loader.load_repositories([ROW])
+    assert query(loader, "SELECT downloads FROM raw_repositories")[0][0] is None
+
+
 def test_the_indexes_exist(loader):
     names = {row[0] for row in query(
         loader, "SELECT indexname FROM pg_indexes WHERE tablename = 'raw_repositories'"

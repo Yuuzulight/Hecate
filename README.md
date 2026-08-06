@@ -87,7 +87,9 @@ pytest --cov=pipeline --cov-report=term-missing
 
 ## Status
 
-Early, and built in the open — the pipeline core works end to end, the rest is tracked in [issues](https://github.com/Yuuzulight/Hecate/issues). GitHub is the only source wired up so far; npm, PyPI and GitLab come next, then the dbt models, then the Kubernetes and monitoring layers.
+Early, and built in the open — the pipeline core works end to end, the rest is tracked in [issues](https://github.com/Yuuzulight/Hecate/issues). GitHub and npm are wired up; PyPI and GitLab come next, then the dbt models, then the Kubernetes and monitoring layers.
+
+A note on comparing across sources: not every metric exists everywhere. Packages have download counts and no stars, repositories have stars and no downloads. Where a source doesn't report something it's stored as null rather than zero, because "this doesn't apply" and "this is zero" are different claims and averaging them together gives you neither.
 
 ## Stack
 

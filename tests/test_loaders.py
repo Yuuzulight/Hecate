@@ -25,6 +25,8 @@ ROW = {
     "created_at": "2015-11-09T01:02:03+00:00",
     "updated_at": "2024-08-06T04:05:06+00:00",
     "description": "An open source machine learning framework",
+    # - GitHub reports no download figure, so this stays empty rather than zero.
+    "downloads": None,
     "extracted_at": "2024-08-06T12:00:00+00:00",
 }
 
