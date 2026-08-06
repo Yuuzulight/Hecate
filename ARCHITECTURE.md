@@ -148,6 +148,10 @@ Social mentions are the missing leading indicator: a library with eight hundred 
 
 Posts don't belong in `raw_repositories` though. Every row there is an artifact with an identity; a post is an *event about* one, which is a different grain. They get their own table with a foreign key back, and the repository picks up aggregates rather than raw posts.
 
+Hacker News is the source of those today. Reddit was scoped and dropped: it now gates API access behind a registration step separate from creating an app, and refuses plenty of ordinary accounts. Not worth the fight for a second source of the same signal, particularly when the Hacker News audience overlaps this domain more closely anyway. The table is platform-agnostic and has a test proving two platforms aggregate together, so another source is an extractor and nothing else.
+
+Twitter/X was ruled out earlier on cost. Read access has been paid-only since 2023, and the tier permitting useful search volume is expensive enough to be its own decision.
+
 The harder half is knowing what a post refers to. Matching on a link is reliable and covers most technical posts. Matching on a name is not — `requests` is a PyPI package, a GitHub repository, and an ordinary English word, and a fuzzy match would attach attention to the wrong project quietly and plausibly. So link matching first, and name matching only once the link-resolved set can serve as ground truth to measure the error rate against.
 
 This also forces the snapshot table. A mention count without a time dimension cannot distinguish one viral post from sustained interest, so the history that growth rate and trend score always needed stops being optional.
