@@ -252,6 +252,115 @@
     },
     {
       "type": "table",
+      "title": "Momentum",
+      "description": "Growth, download velocity and decayed attention combined. Each component is shown next to the total because the weights are guesses, and signals says how many could be measured at all - a source that cannot report one is not scored down for it. Needs about a week of history before growth contributes.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 29 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT r.name, r.source, m.momentum, m.growth_component AS growth, m.attention_component AS attention, m.signals_measured AS signals FROM analytics_marts.fct_momentum m JOIN raw_repositories r ON r.id = m.repository_id WHERE m.momentum IS NOT NULL ORDER BY m.momentum DESC LIMIT 15"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 100 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "name" },
+            "properties": [{ "id": "custom.width", "value": 200 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "momentum" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "text", "value": null },
+                    { "color": "orange", "value": 25 },
+                    { "color": "red", "value": 60 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "title": "Fastest growing",
+      "description": "Stars gained, from the snapshot history. Absolute and rate together, because 200 to 400 is a doubling and 200,000 to 200,200 is noise. The 7-day column stays empty until there are seven days of snapshots.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 29 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT r.name, r.source, g.stars, g.stars_gained_1d AS gained_1d, g.stars_gained_7d AS gained_7d, g.stars_growth_pct_7d AS pct_7d, g.days_observed AS days FROM analytics_marts.fct_repository_growth g JOIN raw_repositories r ON r.id = g.repository_id WHERE g.stars_gained_1d IS NOT NULL ORDER BY g.stars_gained_1d DESC LIMIT 15"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 95 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "name" },
+            "properties": [{ "id": "custom.width", "value": 190 }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "title": "Being discussed but not tracked",
+      "description": "The discovery queue. Projects people are linking that the dataset does not contain - which is what the seeding, being ranked by cumulative popularity, excludes by construction. Anything clearing the score floor gets fetched on the next run.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 38 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT target_url, posts, total_score AS score, decayed_score AS decayed FROM analytics_marts.fct_undiscovered_mentions ORDER BY decayed_score DESC LIMIT 12"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 95 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "target_url" },
+            "properties": [{ "id": "custom.width", "value": 380 }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "title": "Found by being discussed",
+      "description": "Projects that entered the dataset because people were talking about them, rather than because they were already popular enough to be seeded. Recorded separately because a discovered set is selected by having been discussed, which is a bias on anything computed from it.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 38 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT name, source, stars, created_at::date AS created, loaded_at::date AS found FROM raw_repositories WHERE origin = 'discovered' ORDER BY loaded_at DESC, stars DESC LIMIT 12"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "minWidth": 95 } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "name" },
+            "properties": [{ "id": "custom.width", "value": 200 }]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
       "title": "Field coverage by source",
       "description": "Which fields each source actually populates. Check this before comparing anything across sources - npm reports no stars, GitHub and GitLab report no downloads, and averaging across them gives a number that means nothing.",
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 20 },
