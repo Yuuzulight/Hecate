@@ -13,6 +13,11 @@ sources:
           - name: id
             tests: [not_null, unique]
 
+      - name: repository_snapshots
+        description: >
+          One row per project per day. The only table with history - everything
+          else upserts in place and describes now.
+
       - name: social_mentions
         description: >
           One row per post that links a tracked repository. A different grain

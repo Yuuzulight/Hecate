@@ -73,6 +73,30 @@ models:
           weeks.
         tests: [not_null]
 
+  - name: fct_repository_growth
+    description: >
+      Change per project over 1, 7 and 30 days. Windows are null where there is
+      not enough history rather than zero, so a project first seen yesterday is
+      not ranked alongside one that genuinely has not moved.
+    columns:
+      - name: repository_id
+        description: Keyed here and never on name, which collides across sources.
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('fct_repositories')
+                field: id
+      - name: days_observed
+        tests: [not_null]
+      - name: stars_gained_7d
+        description: Null until there are seven days of snapshots for this project.
+      - name: stars_growth_pct_7d
+        description: >
+          Rate rather than absolute. 200 to 400 is a doubling; 200,000 to
+          200,200 is noise, and absolute change ranks the second one higher.
+
   - name: fct_undiscovered_mentions
     description: >
       Projects being discussed that the dataset does not contain, ranked by
