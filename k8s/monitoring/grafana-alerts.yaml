@@ -1,0 +1,143 @@
+# Alerts on the conditions Prometheus cannot see.
+#
+# The Prometheus rules cover liveness: is the job running, is the exporter up,
+# are errors climbing. What they cannot reach is the data itself, because it
+# lives in Postgres and Prometheus does not speak to Postgres.
+#
+# A source whose row count collapses, or a quality rate sliding, is a pipeline
+# that runs perfectly and produces rubbish - which is the failure mode this
+# project has hit most often. These are the rules for that.
+#
+# Provisioned rather than clicked in, so they survive a pod restart.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alerting
+  namespace: hecate
+data:
+  contact-points.yaml: |
+    apiVersion: 1
+    contactPoints:
+      - orgId: 1
+        name: hecate-webhook
+        receivers:
+          - uid: hecate-webhook
+            type: webhook
+            settings:
+              # - The same sink Alertmanager posts to, so everything arrives in
+              #   one place regardless of which system noticed.
+              url: http://alertmanager-sink:8080/
+    policies:
+      - orgId: 1
+        receiver: hecate-webhook
+        group_by: ['alertname']
+
+  rules.yaml: |
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: hecate-data
+        folder: Hecate
+        interval: 10m
+        rules:
+          - uid: hecate-quality
+            title: Data quality has dropped
+            condition: threshold
+            annotations:
+              summary: >-
+                Stored rows are failing the checks the pipeline applies. The job
+                is running; what it is producing is the problem.
+            for: 30m
+            labels:
+              severity: warning
+            data:
+              - refId: query
+                relativeTimeRange: { from: 600, to: 0 }
+                datasourceUid: postgres
+                model:
+                  format: table
+                  rawQuery: true
+                  rawSql: >-
+                    SELECT round(100.0 * count(*) FILTER (
+                      WHERE url LIKE 'http%'
+                        AND (created_at IS NULL OR created_at <= now())
+                        AND stars >= 0
+                    ) / NULLIF(count(*), 0), 1) AS quality
+                    FROM analytics_marts.fct_repositories
+                  refId: query
+              - refId: threshold
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: query
+                  conditions:
+                    - evaluator: { type: lt, params: [99] }
+                  refId: threshold
+
+          - uid: hecate-source-collapse
+            title: A source has stopped contributing
+            annotations:
+              summary: >-
+                One source is returning far fewer rows than the others. The run
+                will have reported success, because a source that returns little
+                has not failed.
+            condition: threshold
+            for: 1h
+            labels:
+              severity: warning
+            data:
+              - refId: query
+                relativeTimeRange: { from: 600, to: 0 }
+                datasourceUid: postgres
+                model:
+                  format: table
+                  rawQuery: true
+                  # - Smallest source as a share of the largest. Relative, so it
+                  #   does not need retuning every time BATCH_SIZE changes.
+                  rawSql: >-
+                    SELECT round(100.0 * min(repository_count)
+                                 / NULLIF(max(repository_count), 0), 1) AS ratio
+                    FROM analytics_marts.dim_sources
+                  refId: query
+              - refId: threshold
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: query
+                  conditions:
+                    - evaluator: { type: lt, params: [10] }
+                  refId: threshold
+
+          - uid: hecate-discovery-idle
+            title: Nothing has been discovered in a week
+            annotations:
+              summary: >-
+                No project has entered the dataset by being discussed for seven
+                days. Either the mention sources have gone quiet or resolution
+                has broken - both look like success from the job's side.
+            condition: threshold
+            for: 2h
+            labels:
+              severity: info
+            data:
+              - refId: query
+                relativeTimeRange: { from: 600, to: 0 }
+                datasourceUid: postgres
+                model:
+                  format: table
+                  rawQuery: true
+                  rawSql: >-
+                    SELECT count(*) AS found
+                    FROM raw_repositories
+                    WHERE origin = 'discovered'
+                      AND loaded_at > now() - interval '7 days'
+                  refId: query
+              - refId: threshold
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: query
+                  conditions:
+                    - evaluator: { type: lt, params: [1] }
+                  refId: threshold

@@ -116,6 +116,8 @@ spec:
               mountPath: /etc/grafana/provisioning/dashboards
             - name: dashboards
               mountPath: /var/lib/grafana/dashboards
+            - name: alerting
+              mountPath: /etc/grafana/provisioning/alerting
           resources:
             requests:
               cpu: 100m
@@ -139,6 +141,9 @@ spec:
         - name: dashboards
           configMap:
             name: grafana-dashboard
+        - name: alerting
+          configMap:
+            name: grafana-alerting
 
 ---
 apiVersion: v1
