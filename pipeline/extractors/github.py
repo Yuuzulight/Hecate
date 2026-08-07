@@ -5,10 +5,13 @@ caps out at 1000 results however you page it, which is fine here - the point is
 the top of the distribution, not a complete census.
 """
 
-from pipeline.exceptions import ExtractError
-from pipeline.extractors.base import Extractor
+from urllib.parse import urlparse
 
-SEARCH_URL = "https://api.github.com/search/repositories"
+from pipeline.exceptions import ExtractError
+from pipeline.extractors.base import TIMEOUT, Extractor
+
+API_URL = "https://api.github.com"
+SEARCH_URL = f"{API_URL}/search/repositories"
 PER_PAGE = 100
 MAX_RESULTS = 1000
 MIN_STARS = 1000
@@ -39,6 +42,26 @@ class GitHubExtractor(Extractor):
             },
             lambda response: response.json().get("items", []),
         )
+
+    def fetch_by_url(self, project_url: str) -> dict | None:
+        """Fetch one repository by its page URL, or None if it isn't there.
+
+        Same field names as the search response, so the existing mapping is
+        reused rather than a second one written that would drift from it.
+        """
+        path = urlparse(project_url).path.strip("/")
+        if path.count("/") != 1:
+            return None
+
+        response = self.session.get(
+            f"{API_URL}/repos/{path}", headers=self._headers(), timeout=TIMEOUT
+        )
+        if response.status_code == 404:
+            # - Renamed, deleted or private. Not an error worth failing a run.
+            self.log.warning("repository not found", extra={"context": {"url": project_url}})
+            return None
+        self._check(response)
+        return self._transform_to_schema(response.json())
 
     def _check(self, response) -> None:
         """Turn a bad response into an ExtractError, saying so when it's the rate limit."""

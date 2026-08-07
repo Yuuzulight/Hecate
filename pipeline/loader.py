@@ -20,7 +20,7 @@ from pipeline.logger import get_logger
 COLUMNS = (
     "id", "source", "name", "url", "stars", "forks", "language",
     "created_at", "updated_at", "description", "downloads",
-    "open_issues_and_prs", "archived", "is_fork", "extracted_at",
+    "open_issues_and_prs", "archived", "is_fork", "origin", "extracted_at",
 )
 
 MENTION_COLUMNS = (
@@ -62,6 +62,12 @@ ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS downloads BIGINT;
 ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS open_issues_and_prs INTEGER;
 ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS archived BOOLEAN;
 ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS is_fork BOOLEAN;
+
+-- - How a row got here. Null means seeded by one of the ranked source queries;
+--   'discovered' means it was linked from a post and fetched afterwards. Worth
+--   being able to separate: a discovered set is selected by having been talked
+--   about, which is a survivorship bias on any conclusion drawn from it.
+ALTER TABLE raw_repositories ADD COLUMN IF NOT EXISTS origin VARCHAR;
 
 -- - Posts get their own table. Every row above is an artifact with an identity;
 --   a post is an event *about* one, which is a different grain. Putting them
@@ -148,6 +154,9 @@ ON CONFLICT (id) DO UPDATE SET
     open_issues_and_prs = EXCLUDED.open_issues_and_prs,
     archived = EXCLUDED.archived,
     is_fork = EXCLUDED.is_fork,
+    -- - How it first arrived, so a later seeded run does not erase the fact
+    --   that a project was found by being talked about.
+    origin = coalesce(raw_repositories.origin, EXCLUDED.origin),
     extracted_at = EXCLUDED.extracted_at,
     loaded_at = NOW()
 """
@@ -290,6 +299,37 @@ class PostgreSQLLoader:
 
         self.log.info("snapshot written", extra={"context": {"rows": written}})
         return written
+
+    def unresolved_mentions(self) -> list[dict]:
+        """Stored mentions still waiting on a repository, for a second pass."""
+        with self.transaction() as cur:
+            cur.execute(
+                f"SELECT {', '.join(MENTION_COLUMNS)} FROM social_mentions "
+                "WHERE repository_id IS NULL AND target_url IS NOT NULL"
+            )
+            return [dict(zip(MENTION_COLUMNS, row)) for row in cur.fetchall()]
+
+    def discovery_candidates(self, minimum_score: int, limit: int) -> list[str]:
+        """Project URLs being discussed that we don't track, best first.
+
+        Bounded by `limit` because this drives one API call each, and an
+        unbounded pass over every URL Hacker News mentions is a rate-limit
+        incident rather than a feature.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                """
+                SELECT target_url, sum(score) AS attention
+                FROM social_mentions
+                WHERE repository_id IS NULL AND target_url IS NOT NULL
+                GROUP BY target_url
+                HAVING sum(score) >= %s
+                ORDER BY attention DESC
+                LIMIT %s
+                """,
+                (minimum_score, limit),
+            )
+            return [row[0] for row in cur.fetchall()]
 
     def resolve_urls(self, urls: set[str]) -> dict[str, str]:
         """Map project URLs to the repository ids we store them under.

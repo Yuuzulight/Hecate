@@ -187,6 +187,50 @@ def test_rows_for_only_returns_the_source_asked_for(loader):
     assert [r["id"] for r in loader.rows_for("github")] == ["github_1"]
 
 
+def test_discovery_candidates_rank_by_attention(loader):
+    loader.load_repositories([ROW])
+    loader.load_mentions([
+        dict(MENTION, id="hn_a", repository_id=None,
+             target_url="https://github.com/a/quiet", score=30),
+        dict(MENTION, id="hn_b", repository_id=None,
+             target_url="https://github.com/b/loud", score=90),
+        dict(MENTION, id="hn_c", repository_id=None,
+             target_url="https://github.com/c/ignored", score=2),
+    ])
+    assert loader.discovery_candidates(minimum_score=25, limit=10) == [
+        "https://github.com/b/loud",
+        "https://github.com/a/quiet",
+    ]
+
+
+def test_discovery_candidates_respect_the_cap(loader):
+    # - The cap is what stops a busy day becoming a rate-limit incident.
+    loader.load_repositories([ROW])
+    loader.load_mentions([
+        dict(MENTION, id=f"hn_{i}", repository_id=None,
+             target_url=f"https://github.com/x/r{i}", score=100)
+        for i in range(5)
+    ])
+    assert len(loader.discovery_candidates(minimum_score=25, limit=2)) == 2
+
+
+def test_already_tracked_projects_are_not_candidates(loader):
+    loader.load_repositories([ROW])
+    loader.load_mentions([MENTION])
+    assert loader.discovery_candidates(minimum_score=1, limit=10) == []
+
+
+def test_origin_records_how_a_repository_arrived(loader):
+    loader.load_repositories([dict(ROW, id="github_9", origin="discovered")])
+    assert query(loader, "SELECT origin FROM raw_repositories WHERE id='github_9'")[0][0] == "discovered"
+
+
+def test_a_later_seeded_run_does_not_erase_that_it_was_discovered(loader):
+    loader.load_repositories([dict(ROW, id="github_9", origin="discovered")])
+    loader.load_repositories([dict(ROW, id="github_9", origin=None)])
+    assert query(loader, "SELECT origin FROM raw_repositories WHERE id='github_9'")[0][0] == "discovered"
+
+
 def test_rows_for_an_absent_source_is_empty(loader):
     assert loader.rows_for("gitlab") == []
 

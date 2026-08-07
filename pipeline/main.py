@@ -57,6 +57,49 @@ def resolve(loader: PostgreSQLLoader, mentions: list[dict]) -> list[dict]:
     return annotated
 
 
+# - A post has to clear this before its project is worth an API call, and no
+#   more than this many are fetched per run. Both are guesses until there is
+#   enough data to tune them; the cap is the one that matters, because without
+#   it a busy day on Hacker News becomes a rate-limit incident.
+DISCOVERY_MIN_SCORE = 25
+DISCOVERY_LIMIT = 20
+
+
+def discover(config: Config, loader: PostgreSQLLoader, transformer) -> int:
+    """Fetch repositories that are being discussed but aren't tracked.
+
+    This is what makes the dataset answer the question it claims to. Sources
+    are seeded by cumulative popularity, so a project trending before it is
+    famous is excluded by the seeding - unless something goes and gets it.
+    """
+    log = get_logger("main")
+    candidates = loader.discovery_candidates(DISCOVERY_MIN_SCORE, DISCOVERY_LIMIT)
+    if not candidates:
+        return 0
+
+    if len(candidates) == DISCOVERY_LIMIT:
+        log.info("discovery capped", extra={"context": {"limit": DISCOVERY_LIMIT}})
+
+    github = GitHubExtractor(config)
+    found = []
+    for url in candidates:
+        try:
+            raw = github.fetch_by_url(url)
+        except HecateError as exc:
+            log.warning("discovery lookup failed", extra={"context": {"url": url, "error": str(exc)}})
+            continue
+        if raw:
+            found.append({**raw, "origin": "discovered"})
+
+    rows = transformer.transform_all(found, "github")
+    loaded = loader.load_repositories(rows)
+    log.info(
+        "discovered repositories",
+        extra={"context": {"looked_up": len(candidates), "added": loaded}},
+    )
+    return loaded
+
+
 def run(config: Config) -> tuple[int, list[str]]:
     """Run every source. Returns rows loaded and the sources that failed."""
     log = get_logger("main")
@@ -114,6 +157,19 @@ def run(config: Config) -> tuple[int, list[str]]:
                     "source failed",
                     extra={"context": {"source": extractor.source, "error": str(exc)}},
                 )
+
+        # - After mentions, so there are candidates, and before the snapshot so
+        #   anything found today is in today's history.
+        if mentions_ran:
+            try:
+                if discover(config, loader, transformer):
+                    # - Re-resolve, so the post that caused a discovery attaches
+                    #   to the repository it produced.
+                    loader.load_mentions(
+                        resolve(loader, loader.unresolved_mentions())
+                    )
+            except Exception as exc:
+                log.exception("discovery failed", extra={"context": {"error": str(exc)}})
 
         # - Last, so it records the state everything else just produced. A
         #   failure here costs the day's history, not the day's data.

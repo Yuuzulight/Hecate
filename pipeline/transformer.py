@@ -107,6 +107,8 @@ class RepositoryTransformer:
             "open_issues_and_prs": _optional_count(record.get("open_issues_and_prs")),
             "archived": _flag(record.get("archived")),
             "is_fork": _flag(record.get("is_fork")),
+            # - Null for anything a ranked source query returned.
+            "origin": _text(record.get("origin")),
             "extracted_at": _timestamp(record.get("extracted_at")),
         }
 
