@@ -97,6 +97,26 @@ models:
           Rate rather than absolute. 200 to 400 is a doubling; 200,000 to
           200,200 is noise, and absolute change ranks the second one higher.
 
+  - name: fct_momentum
+    description: >
+      What is accelerating, combining growth, usage and attention. Every
+      component is visible alongside the total, because a ranking nobody can
+      take apart is a ranking nobody should trust and these weights are guesses.
+    columns:
+      - name: repository_id
+        tests: [not_null, unique]
+      - name: momentum
+        description: >
+          Mean of the signals that could be measured. A source missing one is
+          not penalised - npm has no stars, GitHub no downloads - so an absent
+          component neither adds to the total nor dilutes it.
+      - name: signals_measured
+        description: >
+          How many of the three contributed. Read momentum next to this: a
+          score from one signal is a weaker claim than the same score from
+          three.
+        tests: [not_null]
+
   - name: fct_undiscovered_mentions
     description: >
       Projects being discussed that the dataset does not contain, ranked by
