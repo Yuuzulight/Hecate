@@ -26,6 +26,10 @@ spec:
         - podSelector:
             matchLabels:
               app: hecate-metrics
+        # - The nightly dbt rebuild.
+        - podSelector:
+            matchLabels:
+              app: hecate-dbt
         # - Grafana, which queries the marts directly.
         - podSelector:
             matchLabels:

@@ -44,3 +44,27 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # - dbt ships as its own image rather than inflating the pipeline one with
+      #   a tool the pipeline never runs. Same repository, same commit, so the
+      #   models cannot drift from the code that produced the data.
+      - name: Tags for the dbt image
+        id: dbt-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-dbt
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push dbt
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: dbt
+          push: true
+          tags: ${{ steps.dbt-meta.outputs.tags }}
+          labels: ${{ steps.dbt-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

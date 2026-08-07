@@ -12,8 +12,14 @@ venv/
 htmlcov/
 coverage.xml
 tests/
-dbt/
 k8s/
 docs/
 .env
 *.md
+
+# - dbt/ is deliberately not excluded: the dbt stage copies it. The pipeline
+#   stage simply never does, so it costs that image nothing.
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/.user.yml

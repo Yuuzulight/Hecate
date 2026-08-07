@@ -1,0 +1,62 @@
+# Rebuilds the analytics models after the nightly extraction.
+#
+# Without this the CronJob loads fresh rows every night and the marts keep
+# serving whatever they were last built from, so the dashboard shows yesterday's
+# analysis over today's data and nothing about it looks wrong.
+#
+# Separate image from the pipeline, built from the same repository and the same
+# commit, so the models cannot drift from the code that produced the data they
+# read.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hecate-dbt
+  namespace: hecate
+spec:
+  # - An hour after the extraction job. Generous: that run takes minutes, and
+  #   rebuilding against a half-loaded table is worse than rebuilding late.
+  schedule: "0 3 * * *"
+
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            # - What the NetworkPolicy matches on to allow database access.
+            app: hecate-dbt
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: dbt
+              image: ghcr.io/yuuzulight/hecate-dbt:1.1.0
+              env:
+                - name: DB_HOST
+                  value: postgres.hecate.svc.cluster.local
+                - name: DB_PORT
+                  value: "5432"
+                - name: DB_NAME
+                  value: hecate
+                - name: DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: username
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: password
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
