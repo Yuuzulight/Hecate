@@ -1,0 +1,149 @@
+# Somewhere for alerts to arrive.
+#
+# The receiver is a webhook that logs what it gets. That is deliberate: the
+# point of this issue is that something fires and is received, not where it
+# ends up. Swapping in Slack, email or PagerDuty is a change to one block of
+# config, and choosing between them is a decision about who is on call rather
+# than an engineering one.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: hecate
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: default
+      group_by: ['alertname', 'source']
+      # - Wait a little before sending, so several sources stalling together
+      #   arrive as one alert rather than four.
+      group_wait: 30s
+      group_interval: 5m
+      # - Daily. A stalled pipeline stays stalled, and repeating hourly trains
+      #   people to ignore it.
+      repeat_interval: 24h
+
+    receivers:
+      - name: default
+        webhook_configs:
+          - url: http://alertmanager-sink:8080/
+            send_resolved: true
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: hecate
+  labels:
+    app: alertmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.28.0
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+          ports:
+            - name: web
+              containerPort: 9093
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: data
+              mountPath: /alertmanager
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: hecate
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - name: web
+      port: 9093
+      targetPort: 9093
+
+---
+# - The sink. An alert that Alertmanager accepts but cannot deliver is only
+#   half a working path, so there is something real on the other end to prove
+#   delivery rather than assume it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-sink
+  namespace: hecate
+  labels:
+    app: alertmanager-sink
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager-sink
+  template:
+    metadata:
+      labels:
+        app: alertmanager-sink
+    spec:
+      containers:
+        - name: sink
+          image: mendhak/http-https-echo:34
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-sink
+  namespace: hecate
+spec:
+  selector:
+    app: alertmanager-sink
+  ports:
+    - port: 8080
+      targetPort: 8080

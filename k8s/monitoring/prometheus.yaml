@@ -7,6 +7,13 @@ metadata:
     app: prometheus
 spec:
   replicas: 1
+  # - Recreate, not the default rolling update. The data volume is
+  #   ReadWriteOnce, so a rolling update starts a replacement that cannot mount
+  #   it until the old pod releases it, and the old pod is not going anywhere
+  #   until the replacement is ready. Every restart deadlocks in CrashLoopBackOff
+  #   with "lock DB directory: resource temporarily unavailable".
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: prometheus
@@ -31,6 +38,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
             - name: data
               mountPath: /prometheus
           resources:
@@ -49,6 +58,9 @@ spec:
         - name: config
           configMap:
             name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-rules
         - name: data
           persistentVolumeClaim:
             claimName: prometheus-data

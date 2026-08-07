@@ -43,6 +43,14 @@ data:
       scrape_interval: 15s
       evaluation_interval: 15s
 
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager:9093"]
+
     scrape_configs:
       # - Discovers anything in the namespace carrying prometheus.io/scrape,
       #   so a new component becomes a target by annotating it rather than by

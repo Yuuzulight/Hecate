@@ -1,0 +1,71 @@
+# What Prometheus should shout about.
+#
+# Three rules, which between them cover nearly everything that can actually go
+# wrong here. The first is the one that matters: a scheduled job that quietly
+# stops running is the most likely real failure this system has, and without an
+# alert it is only visible to somebody looking at a dashboard at the right time.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: hecate
+data:
+  hecate.rules.yml: |
+    groups:
+      - name: hecate
+        interval: 30s
+        rules:
+          # - Two days, not one. The job runs daily, so a single missed run is
+          #   worth knowing about but not worth waking up for; two consecutive
+          #   misses means it has stopped rather than stumbled.
+          - alert: ExtractionStalled
+            expr: max by (source) (hecate_last_extraction_age_seconds) > 172800
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.source }} has not been extracted for over two days"
+              description: >-
+                The scheduled job has not successfully read {{ $labels.source }}
+                in {{ $value | humanizeDuration }}. It has most likely stopped
+                running rather than failed, since a failure would raise errors.
+
+          # - The exporter is also what serves the metric above, so if it goes
+          #   the staleness alert goes blind with it. This is the watchdog on
+          #   the watchdog.
+          - alert: ExporterDown
+            expr: up{job="hecate-pods"} == 0
+            for: 15m
+            labels:
+              severity: critical
+            annotations:
+              summary: "The metrics exporter is unreachable"
+              description: >-
+                Prometheus cannot scrape the exporter, which means the
+                extraction-age alert cannot fire either.
+
+          - alert: ErrorsRising
+            expr: sum by (type) (rate(hecate_errors_total[15m])) > 0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.type }} errors are ongoing"
+              description: >-
+                Sustained for half an hour, so this is a persistent fault rather
+                than one API having a bad minute.
+
+          # - Quiet is not the same as healthy. If every source stops being
+          #   reported the gauges vanish rather than going to zero, and nothing
+          #   above would notice.
+          - alert: NoDataCollected
+            expr: absent(hecate_repositories)
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "No repository counts are being reported at all"
+              description: >-
+                The gauge has disappeared rather than dropped, which usually
+                means the exporter cannot reach the database.
