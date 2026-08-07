@@ -26,6 +26,9 @@ select
     date_trunc('week', posted_at)::date as week_starting,
 
     count(*) as posts,
+    -- - So a sceptical query can drop prose matches without recomputing.
+    count(*) filter (where match_confidence >= 1.0) as linked_posts,
+    min(match_confidence) as lowest_confidence,
     sum(score) as total_score,
     sum(comments) as total_comments,
 

@@ -16,6 +16,11 @@ select
     coalesce(comments, 0) as comments,
     author,
     channel,
+
+    -- - 1.0 means a link, which is certain. Lower came from matching a name in
+    --   prose. Null predates the column. Carried through so any figure that
+    --   matters can insist on certainty.
+    coalesce(match_confidence, 1.0) as match_confidence,
     posted_at,
     date_part('day', now() - posted_at)::int as age_days,
     extracted_at
