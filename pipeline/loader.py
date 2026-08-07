@@ -25,7 +25,8 @@ COLUMNS = (
 
 MENTION_COLUMNS = (
     "id", "platform", "repository_id", "target_url", "title", "url", "score",
-    "comments", "author", "channel", "posted_at", "extracted_at",
+    "comments", "author", "channel", "match_confidence", "posted_at",
+    "extracted_at",
 )
 
 # - downloads stays nullable rather than defaulting to zero. GitHub and GitLab
@@ -104,6 +105,11 @@ CREATE INDEX IF NOT EXISTS idx_social_mentions_posted_at
 -- - For databases created while mentions had to resolve.
 ALTER TABLE social_mentions ALTER COLUMN repository_id DROP NOT NULL;
 ALTER TABLE social_mentions ADD COLUMN IF NOT EXISTS target_url VARCHAR;
+
+-- - How much to trust the link between post and repository. 1.0 is a URL,
+--   which is certain. Anything lower came from matching a name in prose and
+--   should be filterable out of any figure that matters.
+ALTER TABLE social_mentions ADD COLUMN IF NOT EXISTS match_confidence NUMERIC;
 
 CREATE INDEX IF NOT EXISTS idx_social_mentions_target_url
     ON social_mentions(target_url) WHERE repository_id IS NULL;
@@ -299,6 +305,23 @@ class PostgreSQLLoader:
 
         self.log.info("snapshot written", extra={"context": {"rows": written}})
         return written
+
+    def repository_names(self) -> dict[str, str]:
+        """Lowercased project name to repository id, for name matching.
+
+        Names shared by more than one repository are dropped entirely: if
+        `parser` exists under two owners, no post naming it can be attributed
+        to either, and picking one would be a coin toss dressed as data.
+        """
+        with self.transaction() as cur:
+            cur.execute("""
+                SELECT lower(name), min(id), count(*)
+                FROM raw_repositories
+                WHERE name IS NOT NULL
+                GROUP BY lower(name)
+                HAVING count(*) = 1
+            """)
+            return {row[0]: row[1] for row in cur.fetchall()}
 
     def unresolved_mentions(self) -> list[dict]:
         """Stored mentions still waiting on a repository, for a second pass."""

@@ -62,6 +62,12 @@ class Config:
 
         # - Bounded at both ends. A stray zero turns a polite run into four
         #   APIs being hammered, and nothing here needs a batch that large.
+        # - Off unless asked for. Name matching fails quietly, attaching
+        #   attention to the wrong project in a way that looks perfectly
+        #   plausible, so it stays opt-in until its measured error rate
+        #   justifies it. tools/measure_name_matching.py produces that number.
+        self.name_matching = _optional("NAME_MATCHING").lower() in ("1", "true", "yes", "on")
+
         self.batch_size = _int("BATCH_SIZE", 100, maximum=10_000)
         self.retry_attempts = _int("RETRY_ATTEMPTS", 3, maximum=10)
 

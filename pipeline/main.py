@@ -20,6 +20,7 @@ from pipeline.extractors import (
 )
 from pipeline.loader import PostgreSQLLoader
 from pipeline.logger import get_logger
+from pipeline.matching import resolve_by_name
 from pipeline.transformer import RepositoryTransformer
 
 EXTRACTORS = (GitHubExtractor, NpmExtractor, PyPiExtractor, GitLabExtractor)
@@ -48,6 +49,11 @@ def resolve(loader: PostgreSQLLoader, mentions: list[dict]) -> list[dict]:
         {**mention, "repository_id": found.get(mention["target_url"])}
         for mention in mentions
     ]
+
+    # - A link is certain. Anything below that came from prose.
+    for mention in annotated:
+        if mention["repository_id"]:
+            mention["match_confidence"] = 1.0
 
     matched = sum(1 for m in annotated if m["repository_id"])
     log.info(
@@ -98,6 +104,30 @@ def discover(config: Config, loader: PostgreSQLLoader, transformer) -> int:
         extra={"context": {"looked_up": len(candidates), "added": loaded}},
     )
     return loaded
+
+
+# - Deliberately below 1.0, so any query can exclude prose matches by asking
+#   for full confidence and nothing else has to change.
+NAME_MATCH_CONFIDENCE = 0.5
+
+
+def name_match(loader: PostgreSQLLoader) -> list[dict]:
+    """Attach repositories to unresolved mentions by name, where unambiguous."""
+    log = get_logger("main")
+    names = loader.repository_names()
+    matched = []
+
+    for mention in loader.unresolved_mentions():
+        repository_id = resolve_by_name(mention.get("title") or "", names)
+        if repository_id:
+            matched.append({
+                **mention,
+                "repository_id": repository_id,
+                "match_confidence": NAME_MATCH_CONFIDENCE,
+            })
+
+    log.info("name matching", extra={"context": {"matched": len(matched)}})
+    return matched
 
 
 def run(config: Config) -> tuple[int, list[str]]:
@@ -160,6 +190,14 @@ def run(config: Config) -> tuple[int, list[str]]:
 
         # - After mentions, so there are candidates, and before the snapshot so
         #   anything found today is in today's history.
+        if mentions_ran and config.name_matching:
+            try:
+                named = name_match(loader)
+                if named:
+                    loader.load_mentions(named)
+            except Exception as exc:
+                log.exception("name matching failed", extra={"context": {"error": str(exc)}})
+
         if mentions_ran:
             try:
                 if discover(config, loader, transformer):
