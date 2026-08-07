@@ -2,9 +2,10 @@
 
 Two things PyPI doesn't give you.
 
-There's no endpoint for the most-downloaded packages, and the old XML-RPC search
-was withdrawn, so the set below is a seeded list rather than a ranking. Adding
-to PACKAGES widens it.
+There's no endpoint for the most-downloaded packages and the old XML-RPC search
+was withdrawn, so the ranking comes from a published dataset built on the
+official BigQuery download statistics. That also supplies the download figures
+the JSON API will not.
 
 And the JSON API's `downloads` block is a deprecated stub - it answers -1 for
 every window rather than a real figure. Actual numbers live in the public
@@ -20,7 +21,24 @@ from pipeline.exceptions import ExtractError
 from pipeline.extractors.base import TIMEOUT, Extractor
 
 # - Seeded by hand. Not a ranking, just a spread of things in wide use.
-PACKAGES = (
+# - PyPI publishes no ranking and its old search was withdrawn, so the sample
+#   has to come from somewhere else. This dataset is generated from the official
+#   BigQuery download statistics and carries the figures PyPI's own JSON API
+#   refuses to give, which fixes the empty downloads column at the same time.
+#
+#   It is a third party endpoint, so the hand-written list below stays as a
+#   fallback. Losing the ranking should narrow this source, not kill it.
+TOP_PACKAGES_URL = (
+    "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json"
+)
+
+# - The dataset counts a 30 day window; npm reports weekly. Storing both raw in
+#   one column would make any cross-source comparison silently wrong, so this
+#   converts to the weekly figure the column is documented to hold. Average
+#   weeks per month, not four, or every PyPI package would read ~8% high.
+WEEKS_PER_MONTH = 4.345
+
+FALLBACK_PACKAGES = (
     "requests", "urllib3", "boto3", "setuptools", "certifi", "charset-normalizer",
     "idna", "typing-extensions", "packaging", "python-dateutil", "six", "numpy",
     "pandas", "click", "pyyaml", "jinja2", "markupsafe", "attrs", "pydantic",
@@ -34,16 +52,48 @@ PACKAGES = (
 class PyPiExtractor(Extractor):
     source = "pypi"
 
+    def _ranked_packages(self) -> list[tuple[str, int | None]]:
+        """Package names most-downloaded first, with their monthly figure.
+
+        Falls back to the hand-written list if the dataset is unreachable. A
+        third party endpoint having a bad day should narrow this source, not
+        take it out - and the fallback has no download figures, which is why
+        they come back as None rather than zero.
+        """
+        try:
+            response = self.session.get(TOP_PACKAGES_URL, timeout=TIMEOUT)
+            if response.ok:
+                rows = response.json().get("rows", [])
+                if rows:
+                    return [(r["project"], r.get("download_count")) for r in rows]
+            self.log.warning(
+                "top packages unavailable, using the fallback list",
+                extra={"context": {"status": response.status_code}},
+            )
+        except Exception as exc:
+            self.log.warning(
+                "top packages unreachable, using the fallback list",
+                extra={"context": {"error": str(exc)}},
+            )
+        return [(name, None) for name in FALLBACK_PACKAGES]
+
     def fetch(self) -> list[dict]:
         rows = []
-        # - The whole list, every time. Slicing by batch_size would silently
-        #   return whichever packages happen to be listed first rather than any
-        #   meaningful subset, and there is no ranking here to slice by.
-        for name in PACKAGES:
+        # - Ranked, so slicing by batch_size takes the most downloaded rather
+        #   than whichever happened to be listed first.
+        for name, monthly in self._ranked_packages()[: self.config.batch_size]:
             raw = self._package(name)
             if raw is not None:
-                rows.append(self._transform_to_schema(raw))
+                rows.append({
+                    **self._transform_to_schema(raw),
+                    "downloads": self._weekly(monthly),
+                })
         return rows
+
+    @staticmethod
+    def _weekly(monthly: int | None) -> int | None:
+        """Monthly downloads as a weekly figure, or None if we have neither."""
+        return None if monthly is None else int(monthly / WEEKS_PER_MONTH)
 
     def fetch_by_url(self, url: str) -> dict | None:
         """One package, from a pypi.org/project/<name> URL, for discovery."""
