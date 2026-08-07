@@ -32,7 +32,7 @@ spec:
     spec:
       containers:
         - name: metrics
-          image: ghcr.io/yuuzulight/hecate:1.1.1
+          image: ghcr.io/yuuzulight/hecate:1.2.0
           command: ["python", "-m", "pipeline.server"]
           ports:
             - name: metrics

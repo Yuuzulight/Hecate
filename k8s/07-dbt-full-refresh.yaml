@@ -32,7 +32,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: dbt
-              image: ghcr.io/yuuzulight/hecate-dbt:1.1.1
+              image: ghcr.io/yuuzulight/hecate-dbt:1.2.0
               # - The only difference from the nightly job.
               command: ["dbt", "build", "--full-refresh",
                         "--project-dir", "/app/dbt", "--profiles-dir", "/app/dbt"]
