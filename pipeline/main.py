@@ -15,6 +15,7 @@ from pipeline.extractors import (
     GitHubExtractor,
     GitLabExtractor,
     HackerNewsExtractor,
+    LobstersExtractor,
     NpmExtractor,
     PyPiExtractor,
 )
@@ -29,7 +30,7 @@ EXTRACTORS = (GitHubExtractor, NpmExtractor, PyPiExtractor, GitLabExtractor)
 #   events about a repository rather than repositories, so they skip the
 #   transformer entirely and run after everything else - there has to be
 #   something stored before a link has anything to resolve against.
-MENTION_EXTRACTORS = (HackerNewsExtractor,)
+MENTION_EXTRACTORS = (HackerNewsExtractor, LobstersExtractor)
 
 
 def resolve(loader: PostgreSQLLoader, mentions: list[dict]) -> list[dict]:
