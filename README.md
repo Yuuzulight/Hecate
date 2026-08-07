@@ -181,6 +181,8 @@ Four jobs then run on their own:
 | 04:00 | `hecate-backup` | dump the database, keep seven |
 | Sun 05:00 | `hecate-dbt-full` | full refresh, clears incremental drift |
 
+Those are UTC. No `timeZone` is set on the CronJobs, so they don't follow the machine's clock — worth knowing before you conclude a run was missed. `captured_on` on the snapshots is the UTC date as well, which is what you want: both move together, so a day is a day regardless of where the machine is.
+
 To trigger one rather than waiting:
 
 ```bash

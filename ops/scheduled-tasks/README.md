@@ -4,7 +4,7 @@ Copies of the prompts driving the two scheduled checks against the running clust
 
 | file | when | what it does |
 |---|---|---|
-| `hecate-daily-health.md` | daily, ~08:54 | Did last night's collection run? Report gaps. |
+| `hecate-daily-health.md` | daily, 13:30 | Did the day's collection run? Report gaps. |
 | `hecate-growth-check.md` | once, 14 Aug 2026 | Whether growth and momentum mean anything yet. |
 
 ## These are copies, not the source

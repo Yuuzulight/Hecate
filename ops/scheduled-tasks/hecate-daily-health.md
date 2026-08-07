@@ -7,7 +7,11 @@ Check that Hecate's overnight collection ran. Keep this short — it is a health
 
 ## Context (this run starts fresh)
 
-Hecate is a repository-intelligence pipeline at `F:\GitHub Projects\Hecate`, running on Docker Desktop's Kubernetes in namespace `hecate`. Four CronJobs run overnight: extraction at 02:00, dbt rebuild at 03:00, backup at 04:00, and a full refresh Sundays at 05:00.
+Hecate is a repository-intelligence pipeline at `F:\GitHub Projects\Hecate`, running on Docker Desktop's Kubernetes in namespace `hecate`. Four CronJobs run: extraction at 02:00, dbt rebuild at 03:00, backup at 04:00, and a full refresh Sundays at 05:00.
+
+Those times are **UTC** — the manifests set no `timeZone`, so the schedules are not the machine's local clock. On a UTC+8 machine that is 10:00, 11:00, 12:00 and 13:00 local. This check is deliberately scheduled at 13:30 local, after all four have run; do not move it earlier, or it will report the current day as missing before that day has been collected.
+
+`captured_on` is the UTC date too, so `current_date` in the queries below lines up with it. Both shift together — no conversion is needed anywhere in this check.
 
 The user is accumulating snapshot history to watch growth over a month, starting 2026-08-07. **A missed day is a permanent gap** — snapshots describe a moment that has passed and cannot be backfilled. Catching a break the morning after is the entire point of this check; catching it a fortnight later is useless.
 
