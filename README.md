@@ -1,37 +1,45 @@
 # Hecate
 
-Hecate collects data about software repositories and packages — from GitHub, npm, PyPI, and GitLab — and turns it into something you can actually ask questions of.
+Hecate collects data about software repositories and packages, watches what people are saying about them, and turns the two together into something you can ask questions of.
 
 The kind of questions it's meant to answer:
 
-- Which projects in a given ecosystem are actually growing, and which just have a lot of old stars?
+- Which projects are actually growing, and which just have a lot of old stars?
 - Is this library still maintained, or has it been quietly abandoned?
-- What's the competitive landscape around a particular tool?
-- Which languages and frameworks are gaining ground right now?
+- What's being talked about right now that I haven't heard of?
+- Which languages and frameworks are gaining ground?
 
-Star counts alone don't tell you much. A repo with 40k stars that hasn't been touched in two years is a different thing from one with 8k stars and weekly releases, and download numbers from npm and PyPI say more about real usage than either does. Hecate pulls all of it together and computes metrics on top.
+Star counts alone don't tell you much. A repo with 60k stars that hasn't taken a commit in three years is a different thing from one with 8k stars and weekly releases, and download numbers say more about real use than either. Discussion says something different again, and earlier: it moves before the stars do.
 
 ## How it works
 
-Data comes in through a set of extractors, one per source. Each source returns a different shape, so everything gets normalised to a common schema before it goes anywhere. From there it lands in PostgreSQL — idempotently, so a crashed run can just be re-run without duplicating anything — and dbt models it into a star schema for analysis. Prometheus scrapes pipeline metrics, Grafana draws the dashboards, and the whole thing runs on Kubernetes as a scheduled job.
+Four sources supply projects: GitHub, npm, PyPI and GitLab. Two more supply conversation about them: Hacker News and Lobsters. Everything is normalised to one schema, then loaded into PostgreSQL idempotently, so a run that dies partway through can just be run again.
+
+The part worth knowing is what happens to a post about a project Hecate doesn't track. Every source is seeded by cumulative popularity — GitHub's most-starred, npm's most-installed — so anything trending *before* it's famous is excluded by the seeding itself. Those posts aren't discarded. They're kept, ranked, and the projects behind them get fetched and added. What people are discussing decides what gets tracked, rather than the other way round.
+
+Every project is also snapshotted daily, which is the only reason growth can be measured at all: everything else describes now, and upserts in place.
 
 ```
-GitHub · npm · PyPI · GitLab
-            |
-      extractors (retry, rate-limit aware)
-            |
-      transformer (one schema for all sources)
-            |
-      PostgreSQL (idempotent upsert)
-            |
-      dbt (staging views -> fact + dimensions)
-            |
-   Grafana dashboards  ·  Prometheus metrics
+GitHub · npm · PyPI · GitLab          Hacker News · Lobsters
+        |                                      |
+   extractors (retry, rate-limit aware)   link resolution
+        |                                      |
+   transformer (one schema)              social_mentions
+        |                                  /        \
+   raw_repositories  <--- discovery <-----          |
+        |                                            |
+   repository_snapshots (daily, the only history)    |
+        |                                            |
+        +--------------> dbt <---------------------- +
+                          |
+        staging views -> facts, dimensions, growth, momentum
+                          |
+       Grafana dashboards  ·  Prometheus metrics  ·  alerts
 ```
 
 ## Running it
 
-You need Docker and Python 3.11 or newer. Start the database and copy the example environment file:
+You need Docker and Python 3.11 or newer.
 
 ```bash
 docker compose up -d postgres
@@ -41,9 +49,7 @@ docker compose up -d postgres
 cp .env.example .env
 ```
 
-The defaults in `.env` line up with what compose starts, so the only thing worth checking is `DB_PORT` — if you already have PostgreSQL on 5432, set it to something free like 5433 and compose will publish there instead.
-
-Then install and run:
+The defaults line up with what compose starts. The one worth checking is `DB_PORT` — if something already holds 5432, set it to 5433 and compose publishes there instead. A `GITHUB_TOKEN` is optional but worth setting; without one you're on the unauthenticated limit of 60 requests an hour.
 
 ```bash
 pip install -r requirements.txt
@@ -53,17 +59,15 @@ pip install -r requirements.txt
 python -m pipeline.main
 ```
 
-That pulls repositories from GitHub, normalises them and writes them to Postgres. Run it twice and you'll still have one row per repository — re-running is safe by design, so a run that dies partway through just gets run again.
+Run it twice and you'll still have one row per project. Re-running is safe by design.
 
-A `GITHUB_TOKEN` in `.env` is optional but worth setting. Without one you're on the unauthenticated rate limit, which is 60 requests an hour.
-
-To run it as the container instead:
+Or from the published image:
 
 ```bash
-docker build -t hecate:v1 . && docker run --rm --network hecate_default -e DB_HOST=postgres -e DB_PASSWORD=dataflow hecate:v1
+docker run --rm --network hecate_default -e DB_HOST=postgres -e DB_PASSWORD=dataflow ghcr.io/yuuzulight/hecate:latest
 ```
 
-Want to browse the data? `docker compose --profile tools up -d` adds pgAdmin on port 5050.
+`docker compose --profile tools up -d` adds pgAdmin on 5050 if you want to browse the tables.
 
 ## Layout
 
@@ -72,32 +76,61 @@ pipeline/
   extractors/     one module per source, on a shared base
   transformer.py  normalisation everything passes through
   loader.py       PostgreSQL, upsert-based
-  expectations.py data quality checks, run after load
+  matching.py     name matching, off by default
+  expectations.py data quality checks
   server.py       metrics endpoint
   main.py         wires it together
-dbt/models/       staging view, then fact and dimensions
-k8s/              namespace, database, CronJob, metrics deployment
-k8s/monitoring/   Prometheus and Grafana
+dbt/models/       staging views, then facts and dimensions
+k8s/              namespace, database, the four scheduled jobs
+k8s/monitoring/   Prometheus, Alertmanager, Grafana
+ops/              scheduled task prompts
+tools/            one-off measurement scripts
 tests/
 ```
 
 ## Analytics
 
-The dbt models live in `dbt/` and read from the table the pipeline writes. Install them as an extra and point dbt at the profile in the project:
+The dbt models read from the tables the pipeline writes.
 
 ```bash
 pip install -e ".[dbt]"
 ```
 
 ```bash
-cd dbt && dbt run --profiles-dir . && dbt test --profiles-dir .
+cd dbt && dbt build --profiles-dir .
 ```
 
-Staging is a view over the raw table with the derived columns added — popularity banding, a normalised language, and days since last activity, which is the interesting one: a large number next to a high star count is roughly the shape of an abandoned project.
+`dbt build` rather than run-then-test, so a model whose test fails isn't left in place looking authoritative.
 
-On top of that sits a small star schema: `fct_repositories` with one row per project, joined out to `dim_languages`, `dim_sources` and a date spine. The fact table is incremental, so a re-run merges rather than appends.
+Staging is a view over the raw table with the derived columns added: popularity banding, a normalised language, days since last activity, and a maintenance status folding in whether a project is formally archived.
 
-`dim_sources` is worth knowing about — as well as per-source totals it carries `with_stars`, `with_downloads` and `with_language` counts, so before you compare anything across sources you can see which of them actually reports the field you're about to compare on.
+On top sits a star schema — `fct_repositories` joined to `dim_languages` and `dim_sources` — plus four models that answer the harder questions:
+
+| model | question |
+|---|---|
+| `fct_repository_growth` | what's gaining stars, downloads, attention |
+| `fct_momentum` | what's accelerating across all three at once |
+| `fct_repository_mentions` | attention per project per week, recent posts weighted higher |
+| `fct_undiscovered_mentions` | what's being discussed that isn't tracked yet |
+
+`dim_sources` is worth knowing about. Alongside per-source totals it carries `with_stars`, `with_downloads` and `with_language` counts, so before comparing anything across sources you can see which of them actually reports the field you're about to compare on.
+
+## What each source actually gives you
+
+Not every metric exists everywhere, and the gaps matter more than they look:
+
+| | stars | downloads | language | first published |
+|---|---|---|---|---|
+| GitHub | yes | — | usually | yes |
+| GitLab | yes | — | — | yes |
+| npm | — | weekly | — | on discovery |
+| PyPI | — | weekly | yes | yes |
+
+Where a source doesn't report something it's stored as null, not zero. "This doesn't apply" and "this is zero" are different claims, and averaging them together gives you neither. That rule runs through the whole schema and is the single thing most likely to trip you up if you ignore it.
+
+A few of the gaps have reasons. GitLab knows what language a project is in, but only from a separate endpoint per project, which is one request per row for one field. npm's search results don't say, and defaulting everything to JavaScript would be inventing data. GitHub and GitLab hand over their most-starred in order; npm has no such ranking, so it's seeded from broad ecosystem keywords and sorted by weekly downloads.
+
+Staleness isn't quite the same measurement everywhere either. GitHub uses the last commit, npm the last publish, PyPI the last release — but GitLab's listing only offers last-activity-of-any-kind, so an issue comment keeps an abandoned project looking fresh. Treat GitLab staleness as the weaker signal.
 
 ## Tests
 
@@ -105,23 +138,17 @@ On top of that sits a small star schema: `fct_repositories` with one row per pro
 pytest
 ```
 
-Nothing in the default run touches the network — every API response is stubbed. Some tests need a real database, since whether an upsert is genuinely idempotent isn't something a mock can answer. Those are skipped unless you ask for them:
+Nothing in the default run touches the network. Some tests need a real database, since whether an upsert is genuinely idempotent isn't a question a mock can answer:
 
 ```bash
 HECATE_INTEGRATION=1 pytest
 ```
 
-That flag is deliberate. If the tests just skipped whenever the connection failed, a suite pointed at the wrong database would report green having tested nothing at all. With it set, a database that won't accept the connection is a failure.
-
-For coverage:
-
-```bash
-pytest --cov=pipeline --cov-report=term-missing
-```
+That flag is deliberate. If the tests simply skipped whenever the connection failed, a suite pointed at the wrong database would report green having tested nothing. With it set, a database that won't accept the connection is a failure.
 
 ## On Kubernetes
 
-Any cluster will do. These instructions assume Docker Desktop's, which is the fiddliest case.
+Any cluster will do. These instructions assume Docker Desktop's, which is the fiddliest.
 
 ```bash
 kubectl apply -f k8s/00-namespace.yaml
@@ -130,38 +157,39 @@ kubectl apply -f k8s/00-namespace.yaml
 Create the secret directly, so no password ends up in a file:
 
 ```bash
-kubectl create secret generic db-secret -n hecate --from-literal=username=dataflow --from-literal=password='pick-something' --from-literal=github-token='' --from-literal=gitlab-token=''
+kubectl create secret generic db-secret -n hecate --from-literal=username=dataflow --from-literal=password='pick-something' --from-literal=github-token='' --from-literal=gitlab-token='' --from-literal=grafana-password='pick-another'
 ```
 
 ```bash
-kubectl apply -f k8s/01-postgres.yaml -f k8s/03-cronjob.yaml -f k8s/04-deployment.yaml -f k8s/04-hpa.yaml
+kubectl apply -f k8s/ && kubectl apply -f k8s/monitoring/
 ```
 
-Docker Desktop's Kubernetes runs its own containerd, separate from the Docker daemon, so a locally built image isn't visible to it. Put it on the node:
+The images come from ghcr.io, so nothing needs building or side-loading. The dashboard is the one thing that isn't a manifest:
 
 ```bash
-docker save hecate:v1 | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+kubectl create configmap grafana-dashboard -n hecate --from-file=hecate.json=k8s/monitoring/dashboards/hecate.json
 ```
 
-Do that again after every rebuild. The tag doesn't change, so a stale copy keeps running quite happily and the only symptom is the pipeline doing less than it should.
+The autoscaler needs metrics-server, which Docker Desktop doesn't ship — the install and the `--kubelet-insecure-tls` patch it needs are documented at the top of `k8s/04-hpa.yaml`.
 
-The autoscaler needs metrics-server, which Docker Desktop doesn't ship. The install and the `--kubelet-insecure-tls` patch it needs are both documented at the top of `k8s/04-hpa.yaml`.
+Four jobs then run on their own:
 
-To trigger a run rather than waiting for 02:00:
+| | | |
+|---|---|---|
+| 02:00 | `hecate-daily` | collect, discover, snapshot |
+| 03:00 | `hecate-dbt` | rebuild the models |
+| 04:00 | `hecate-backup` | dump the database, keep seven |
+| Sun 05:00 | `hecate-dbt-full` | full refresh, clears incremental drift |
+
+To trigger one rather than waiting:
 
 ```bash
 kubectl create job hecate-now --from=cronjob/hecate-daily -n hecate && kubectl logs -f job/hecate-now -n hecate
 ```
 
-Monitoring is optional and goes on afterwards:
+Then `kubectl port-forward svc/grafana 3000:3000 -n hecate` for the dashboard.
 
-```bash
-kubectl create configmap grafana-dashboard -n hecate --from-file=hecate.json=k8s/monitoring/dashboards/hecate.json && kubectl apply -f k8s/monitoring/
-```
-
-Then `kubectl port-forward svc/grafana 3000:3000 -n hecate`. Grafana is set up for anonymous access, which suits a laptop and nothing else — turn it off in `k8s/monitoring/grafana.yaml` before putting it anywhere reachable.
-
-## Metrics
+## Monitoring
 
 The exporter serves Prometheus metrics on port 8000.
 
@@ -175,40 +203,31 @@ The exporter serves Prometheus metrics on port 8000.
 | `hecate_extract_duration_seconds{source}` | how long each source takes |
 | `hecate_load_duration_seconds` | database write time |
 
-The first two are read back off the database rather than counted during a run. A scheduled job's counters die with its pod, so they'd be empty by the time anything scraped them. Extraction age is the one to alert on — if it climbs on every source at once, the job has stopped running.
+The first two are read back off the database rather than counted during a run. A scheduled job's counters die with its pod, so they'd be empty by the time anything scraped them.
+
+Alerting splits along the same line. Prometheus rules cover liveness — job stalled, exporter unreachable, errors climbing. Grafana rules cover the data itself, because quality and coverage live in Postgres and Prometheus can't see them. A pipeline that runs perfectly while producing rubbish is a real failure mode, and it needs watching separately from one that stops.
+
+Extraction age is the alert that matters most. If it climbs across every source at once, the job has stopped running, and nothing else will tell you.
 
 ## Contributing
 
 Open an issue before anything substantial, and keep pull requests to one thing.
 
-Two conventions worth knowing. Nulls are meaningful here: if a source doesn't report a field, it stays null rather than becoming zero, because averages computed over fake zeros are wrong in ways nobody notices. And any non-trivial logic gets a test — the integration ones need a real database, so run `HECATE_INTEGRATION=1 pytest` before pushing anything that touches the loader.
+Two conventions. Nulls are meaningful: if a source doesn't report a field it stays null rather than becoming zero, because averages over fake zeros are wrong in ways nobody notices. And any non-trivial logic gets a test — the integration ones need a real database, so run `HECATE_INTEGRATION=1 pytest` before pushing anything touching the loader.
 
-`ARCHITECTURE.md` has the reasoning behind most of the structural decisions.
+`ARCHITECTURE.md` has the reasoning behind the structural decisions, including the ones that were reversed later and why.
 
 ## Status
 
-Early, and built in the open — all four sources are collecting and the pipeline runs end to end. Next up are the dbt models, then the Kubernetes and monitoring layers. Progress is tracked in [issues](https://github.com/Yuuzulight/Hecate/issues).
+Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups.
 
-## What each source actually gives you
+Momentum needs about a week of snapshot history before it means much — with fewer days than that, the growth windows are correctly null and the ranking leans on attention alone. That resolves itself rather than needing a change.
 
-Not every metric exists everywhere, and the gaps matter more than they look:
-
-| | stars | downloads | language | first published |
-|---|---|---|---|---|
-| GitHub | yes | — | usually | yes |
-| GitLab | yes | — | — | yes |
-| npm | — | weekly | — | — |
-| PyPI | — | — | yes | yes |
-
-Where a source doesn't report something it's stored as null, not zero. "This doesn't apply" and "this is zero" are different claims, and averaging them together gives you neither.
-
-A few of these are worth explaining. GitLab does know what language a project is in, but only from a separate endpoint per project, which is one extra request per row for one field. npm's search results don't say at all, and defaulting everything to JavaScript would be inventing data. PyPI's download figures used to come from its JSON API and now return -1 from a deprecated stub — the real numbers live in a public BigQuery dataset, which is its own piece of work.
-
-Neither npm nor PyPI publishes a ranked list of top packages, so those two are seeded: npm searches across a set of broad ecosystem keywords and ranks what comes back by weekly downloads, PyPI works from a hand-picked list. GitHub and GitLab will both just hand over their most-starred, in order.
+Known limits are listed at the end of `ARCHITECTURE.md`. The honest short version: name-based mention matching is off by default because its error rate hasn't been measured on enough data to trust, PyPI's ranking depends on a third-party dataset, and GitLab contributes no language data.
 
 ## Stack
 
-Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Grafana.
+Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana.
 
 ## Licence
 
