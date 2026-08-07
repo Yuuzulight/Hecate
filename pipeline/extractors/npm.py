@@ -43,6 +43,48 @@ class NpmExtractor(Extractor):
         ranked = sorted(found.values(), key=lambda row: row["downloads"] or 0, reverse=True)
         return ranked[:wanted]
 
+    def fetch_by_url(self, url: str) -> dict | None:
+        """One package, from an npmjs.com/package/<name> URL.
+
+        Used by discovery. The registry's per-package document has a different
+        shape from a search hit, so this maps it rather than reusing
+        _transform_to_schema - the fields genuinely differ.
+        """
+        name = url.rstrip("/").split("/package/", 1)[-1]
+        if not name or name == url:
+            return None
+
+        response = self.session.get(
+            f"{self.config.npm_registry}/{name}", timeout=TIMEOUT
+        )
+        if response.status_code == 404:
+            self.log.warning("package not found", extra={"context": {"package": name}})
+            return None
+        if not response.ok:
+            raise ExtractError(f"npm: {name} returned {response.status_code}")
+
+        raw = response.json()
+        latest = (raw.get("dist-tags") or {}).get("latest")
+        versions = raw.get("time") or {}
+
+        return {
+            "id": f"npm_{raw.get('name')}",
+            "source": self.source,
+            "name": raw.get("name"),
+            "url": f"https://www.npmjs.com/package/{raw.get('name')}",
+            "stars": 0,
+            "forks": 0,
+            "language": None,
+            # - The registry document does carry a creation date, unlike search.
+            "created_at": versions.get("created"),
+            "updated_at": versions.get("modified") or versions.get(latest),
+            "description": raw.get("description"),
+            # - Downloads live on a different endpoint. Left empty rather than
+            #   guessed; the next scheduled search run fills it in.
+            "downloads": None,
+            "extracted_at": self.now(),
+        }
+
     def _search(self, keyword: str) -> list[dict]:
         params = {
             "text": f"keywords:{keyword}",

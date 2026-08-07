@@ -23,6 +23,16 @@ HITS_PER_PAGE = 100
 # - Hosts whose URLs identify something the pipeline might already track.
 REPO_HOSTS = ("github.com", "www.github.com", "gitlab.com", "www.gitlab.com")
 
+# - Package pages, which name one artifact rather than an owner and a repo.
+#   npmjs.com/package/<name>, including scoped names like @babel/parser, and
+#   pypi.org/project/<name>.
+PACKAGE_HOSTS = {
+    "npmjs.com": "/package/",
+    "www.npmjs.com": "/package/",
+    "pypi.org": "/project/",
+    "www.pypi.org": "/project/",
+}
+
 # - owner/repo, ignoring whatever follows: /tree/main, /issues/4, a trailing
 #   slash, a .git suffix.
 REPO_PATH = re.compile(r"^/([^/\s]+)/([^/\s#?]+)")
@@ -44,7 +54,24 @@ def canonical_repo_url(url: str) -> str | None:
         parsed = urlparse(url.strip())
     except ValueError:
         return None
-    if parsed.hostname is None or parsed.hostname.lower() not in REPO_HOSTS:
+    if parsed.hostname is None:
+        return None
+    host = parsed.hostname.lower()
+
+    # - Package pages name one artifact, so the whole remaining path is the
+    #   name. Scoped npm names contain a slash and must survive intact.
+    prefix = PACKAGE_HOSTS.get(host)
+    if prefix:
+        path = parsed.path or ""
+        if not path.startswith(prefix):
+            return None
+        name = path[len(prefix):].strip("/").split("#")[0].split("?")[0]
+        if not name:
+            return None
+        bare = host.removeprefix("www.")
+        return f"https://{bare}{prefix}{name}".lower()
+
+    if host not in REPO_HOSTS:
         return None
 
     match = REPO_PATH.match(parsed.path or "")
@@ -53,8 +80,7 @@ def canonical_repo_url(url: str) -> str | None:
     owner, repo = match.group(1), match.group(2)
     if repo.endswith(".git"):
         repo = repo[: -len(".git")]
-    host = parsed.hostname.lower().removeprefix("www.")
-    return f"https://{host}/{owner}/{repo}".lower()
+    return f"https://{host.removeprefix('www.')}/{owner}/{repo}".lower()
 
 
 class HackerNewsExtractor(Extractor):

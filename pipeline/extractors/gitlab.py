@@ -9,8 +9,10 @@ reports it from a separate endpoint per project. That's one extra request per
 row for a single field, which isn't worth it here, so language stays empty.
 """
 
+from urllib.parse import quote, urlparse
+
 from pipeline.exceptions import ExtractError
-from pipeline.extractors.base import Extractor
+from pipeline.extractors.base import TIMEOUT, Extractor
 
 PROJECTS_PATH = "/api/v4/projects"
 BASE_URL = "https://gitlab.com"
@@ -52,6 +54,27 @@ class GitLabExtractor(Extractor):
         if not isinstance(payload, list):
             raise ExtractError(f"gitlab: expected a list of projects, got {type(payload).__name__}")
         return payload
+
+    def fetch_by_url(self, url: str) -> dict | None:
+        """One project, from a gitlab.com/group/project URL, for discovery.
+
+        GitLab wants the namespaced path URL-encoded, so group/project becomes
+        group%2Fproject.
+        """
+        path = urlparse(url).path.strip("/")
+        if not path or "/" not in path:
+            return None
+
+        response = self.session.get(
+            f"{BASE_URL}{PROJECTS_PATH}/{quote(path, safe='')}",
+            headers=self._headers(),
+            timeout=TIMEOUT,
+        )
+        if response.status_code == 404:
+            self.log.warning("project not found", extra={"context": {"path": path}})
+            return None
+        self._check(response)
+        return self._transform_to_schema(response.json())
 
     def _check(self, response) -> None:
         if response.ok:

@@ -40,10 +40,29 @@ def stub(extractor, response):
         ("https://github.com/tokio-rs/axum.git", "https://github.com/tokio-rs/axum"),
         ("https://www.github.com/tokio-rs/axum", "https://github.com/tokio-rs/axum"),
         ("https://gitlab.com/group/project", "https://gitlab.com/group/project"),
+        # - Package pages name one artifact rather than owner and repo.
+        ("https://www.npmjs.com/package/axum", "https://npmjs.com/package/axum"),
+        ("https://npmjs.com/package/axum/", "https://npmjs.com/package/axum"),
+        ("https://pypi.org/project/requests/", "https://pypi.org/project/requests"),
+        # - Scoped npm names contain a slash and must survive intact.
+        ("https://www.npmjs.com/package/@babel/parser", "https://npmjs.com/package/@babel/parser"),
     ],
 )
 def test_urls_reduce_to_the_project_they_belong_to(url, expected):
     assert canonical_repo_url(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.npmjs.com/",
+        "https://www.npmjs.com/settings/profile",
+        "https://pypi.org/",
+        "https://pypi.org/search/?q=requests",
+    ],
+)
+def test_registry_pages_that_are_not_a_package_resolve_to_nothing(url):
+    assert canonical_repo_url(url) is None
 
 
 @pytest.mark.parametrize(

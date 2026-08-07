@@ -45,6 +45,14 @@ class PyPiExtractor(Extractor):
                 rows.append(self._transform_to_schema(raw))
         return rows
 
+    def fetch_by_url(self, url: str) -> dict | None:
+        """One package, from a pypi.org/project/<name> URL, for discovery."""
+        name = url.rstrip("/").split("/project/", 1)[-1]
+        if not name or name == url:
+            return None
+        raw = self._package(name)
+        return None if raw is None else self._transform_to_schema(raw)
+
     def _package(self, name: str) -> dict | None:
         """Fetch one package, or None if it isn't there any more."""
         response = self.session.get(

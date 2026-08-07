@@ -7,6 +7,7 @@ reports failure if every source failed.
 """
 
 import sys
+from urllib.parse import urlparse
 
 from pipeline.config import Config
 from pipeline.exceptions import HecateError
@@ -87,22 +88,45 @@ def discover(config: Config, loader: PostgreSQLLoader, transformer) -> int:
     if len(candidates) == DISCOVERY_LIMIT:
         log.info("discovery capped", extra={"context": {"limit": DISCOVERY_LIMIT}})
 
-    github = GitHubExtractor(config)
-    found = []
+    # - One extractor per host, built once and reused across candidates so the
+    #   retry policy and session are shared rather than rebuilt per lookup.
+    by_host = {
+        "github.com": GitHubExtractor(config),
+        "gitlab.com": GitLabExtractor(config),
+        "npmjs.com": NpmExtractor(config),
+        "pypi.org": PyPiExtractor(config),
+    }
+
+    found_by_source: dict[str, list[dict]] = {}
     for url in candidates:
+        host = urlparse(url).hostname or ""
+        extractor = by_host.get(host.removeprefix("www."))
+        if extractor is None:
+            continue
         try:
-            raw = github.fetch_by_url(url)
+            raw = extractor.fetch_by_url(url)
         except HecateError as exc:
             log.warning("discovery lookup failed", extra={"context": {"url": url, "error": str(exc)}})
             continue
         if raw:
-            found.append({**raw, "origin": "discovered"})
+            found_by_source.setdefault(extractor.source, []).append(
+                {**raw, "origin": "discovered"}
+            )
 
-    rows = transformer.transform_all(found, "github")
-    loaded = loader.load_repositories(rows)
+    loaded = 0
+    for source, found in found_by_source.items():
+        rows = transformer.transform_all(found, source)
+        loaded += loader.load_repositories(rows)
+
     log.info(
         "discovered repositories",
-        extra={"context": {"looked_up": len(candidates), "added": loaded}},
+        extra={
+            "context": {
+                "looked_up": len(candidates),
+                "added": loaded,
+                "by_source": {s: len(f) for s, f in found_by_source.items()},
+            }
+        },
     )
     return loaded
 
