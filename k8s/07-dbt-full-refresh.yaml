@@ -1,0 +1,62 @@
+# Weekly rebuild from scratch.
+#
+# fct_repositories is incremental, so the nightly job only ever adds. A change
+# to a model's logic, or a row that slipped through in a bad state, stays until
+# something rebuilds from nothing - and today that only happens when a person
+# runs --full-refresh by hand.
+#
+# Same image as the nightly job. No new artifact, just a different argument.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hecate-dbt-full
+  namespace: hecate
+spec:
+  # - Sunday 05:00. An hour after the backup, and well clear of the nightly
+  #   rebuild at 03:00, so the two dbt jobs cannot meet.
+  schedule: "0 5 * * 0"
+
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: hecate-dbt
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: dbt
+              image: ghcr.io/yuuzulight/hecate-dbt:1.1.1
+              # - The only difference from the nightly job.
+              command: ["dbt", "build", "--full-refresh",
+                        "--project-dir", "/app/dbt", "--profiles-dir", "/app/dbt"]
+              env:
+                - name: DB_HOST
+                  value: postgres.hecate.svc.cluster.local
+                - name: DB_PORT
+                  value: "5432"
+                - name: DB_NAME
+                  value: hecate
+                - name: DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: username
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: password
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
