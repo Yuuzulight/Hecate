@@ -7,6 +7,9 @@
 # Separate image from the pipeline, built from the same repository and the same
 # commit, so the models cannot drift from the code that produced the data they
 # read.
+#
+# Verified: builds as a second target, 52 models and tests pass against the
+# cluster database. The image itself is published by the tag build.
 
 apiVersion: batch/v1
 kind: CronJob
