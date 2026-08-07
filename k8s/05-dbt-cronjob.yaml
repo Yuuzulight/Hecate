@@ -38,7 +38,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: dbt
-              image: ghcr.io/yuuzulight/hecate-dbt:1.1.0
+              image: ghcr.io/yuuzulight/hecate-dbt:1.1.1
               env:
                 - name: DB_HOST
                   value: postgres.hecate.svc.cluster.local
