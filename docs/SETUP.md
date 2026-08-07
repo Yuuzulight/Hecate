@@ -52,6 +52,28 @@ kubectl port-forward svc/postgres 5434:5432 -n hecate
 DB_PORT=5434 DB_PASSWORD='...' dbt run --profiles-dir dbt
 ```
 
+## Backups
+
+A CronJob dumps the database nightly at 04:00, after the dbt rebuild, keeping the last seven on their own volume.
+
+Raw repository rows can always be re-fetched from the sources. **The snapshot history cannot** — it describes days that have passed, and nothing can go back and observe them again. That is what the backup is really protecting.
+
+List what exists:
+
+```bash
+kubectl exec -n hecate deploy/hecate-metrics -- ls -lt /backups 2>/dev/null || kubectl get pvc postgres-backups -n hecate
+```
+
+To restore, run a pod with the backup volume attached and pipe a dump into `psql`. This is the sequence that has actually been tested, not an approximation of it:
+
+```bash
+gunzip -c /backups/hecate-<stamp>.sql.gz | psql -d <target-database>
+```
+
+Restore into a scratch database first and compare row counts against the live one before doing anything to production data. A restore verified this way matched exactly — 1,543 repositories, 89 mentions, 1,543 snapshots.
+
+The dump job fails rather than keeping a file under 1KB, because a truncated dump that looks like a backup is worse than an obvious failure.
+
 ## Troubleshooting
 
 Everything here was hit while building this, not imagined.

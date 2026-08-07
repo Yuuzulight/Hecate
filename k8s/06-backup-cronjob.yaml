@@ -1,0 +1,105 @@
+# Nightly database dump.
+#
+# Everything collected lives on one PersistentVolumeClaim. A docker system
+# prune, a Docker Desktop reset, or deleting the namespace takes all of it.
+#
+# Raw repository rows can be re-fetched from the sources. The snapshot history
+# cannot - it describes days that have passed, and nothing can go back and
+# observe them again. That is what this protects.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backups
+  namespace: hecate
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hecate-backup
+  namespace: hecate
+spec:
+  # - After the dbt rebuild, so a dump captures a database in a consistent
+  #   state rather than mid-transformation.
+  schedule: "0 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: hecate-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: dump
+              image: postgres:15
+              env:
+                - name: PGHOST
+                  value: postgres.hecate.svc.cluster.local
+                - name: PGDATABASE
+                  value: hecate
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: username
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: password
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                  out="/backups/hecate-${stamp}.sql.gz"
+
+                  # - Fail on a bad dump rather than writing a truncated file
+                  #   that looks like a backup. pipefail is why this is sh -c
+                  #   with set -eu rather than a bare command.
+                  set -o pipefail
+                  pg_dump --no-owner --no-privileges | gzip > "$out"
+
+                  # - An empty or near-empty dump is a failure, not a backup.
+                  size=$(stat -c%s "$out")
+                  if [ "$size" -lt 1024 ]; then
+                    echo "dump is only ${size} bytes, refusing to keep it"
+                    rm -f "$out"
+                    exit 1
+                  fi
+                  echo "wrote $out (${size} bytes)"
+
+                  # - Bounded. An unbounded backup directory is its own outage,
+                  #   and the volume filling would take the dumps with it.
+                  ls -1t /backups/hecate-*.sql.gz | tail -n +8 | while read old; do
+                    echo "pruning $old"
+                    rm -f "$old"
+                  done
+
+                  echo "kept: $(ls -1 /backups/hecate-*.sql.gz | wc -l)"
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: postgres-backups

@@ -30,6 +30,10 @@ spec:
         - podSelector:
             matchLabels:
               app: hecate-dbt
+        # - The nightly dump.
+        - podSelector:
+            matchLabels:
+              app: hecate-backup
         # - Grafana, which queries the marts directly.
         - podSelector:
             matchLabels:
