@@ -178,11 +178,11 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "minWidth": 110 } },
+        "defaults": { "custom": { "minWidth": 55 } },
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "name" },
-            "properties": [{ "id": "custom.width", "value": 230 }]
+            "properties": [{ "id": "custom.width", "value": 175 }]
           },
           {
             "matcher": { "id": "byName", "options": "days_stale" },
@@ -213,19 +213,19 @@
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT name, language, stars, stars_per_fork FROM analytics_marts.fct_repositories WHERE stars > 0 ORDER BY stars DESC LIMIT 12"
+          "rawSql": "SELECT name, language, stars, stars_per_fork AS per_fork FROM analytics_marts.fct_repositories WHERE stars > 0 ORDER BY stars DESC LIMIT 12"
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "minWidth": 120 } },
+        "defaults": { "custom": { "minWidth": 55 } },
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "name" },
-            "properties": [{ "id": "custom.width", "value": 240 }]
+            "properties": [{ "id": "custom.width", "value": 175 }]
           },
           {
-            "matcher": { "id": "byName", "options": "stars_per_fork" },
-            "properties": [{ "id": "decimals", "value": 1 }, { "id": "custom.width", "value": 130 }]
+            "matcher": { "id": "byName", "options": "per_fork" },
+            "properties": [{ "id": "decimals", "value": 1 }, { "id": "custom.width", "value": 75 }]
           }
         ]
       }
@@ -260,19 +260,24 @@
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT r.name, r.source, m.momentum, m.growth_component AS growth, m.attention_component AS attention, m.signals_measured AS signals FROM analytics_marts.fct_momentum m JOIN raw_repositories r ON r.id = m.repository_id WHERE m.momentum IS NOT NULL ORDER BY m.momentum DESC LIMIT 15"
+          "rawSql": "SELECT r.name, r.source, m.momentum, m.growth_component AS growth, m.attention_component AS attn, m.signals_measured AS signals FROM analytics_marts.fct_momentum m JOIN raw_repositories r ON r.id = m.repository_id WHERE m.momentum IS NOT NULL ORDER BY m.momentum DESC LIMIT 15"
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "minWidth": 100 } },
+        "defaults": { "custom": { "minWidth": 55 } },
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "name" },
-            "properties": [{ "id": "custom.width", "value": 200 }]
+            "properties": [{ "id": "custom.width", "value": 165 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "source" },
+            "properties": [{ "id": "custom.width", "value": 70 }]
           },
           {
             "matcher": { "id": "byName", "options": "momentum" },
             "properties": [
+              { "id": "custom.width", "value": 85 },
               { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
               {
                 "id": "thresholds",
@@ -300,15 +305,19 @@
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT r.name, r.source, g.stars, g.stars_gained_1d AS gained_1d, g.stars_gained_7d AS gained_7d, g.stars_growth_pct_7d AS pct_7d, g.days_observed AS days FROM analytics_marts.fct_repository_growth g JOIN raw_repositories r ON r.id = g.repository_id WHERE g.stars_gained_1d IS NOT NULL ORDER BY g.stars_gained_1d DESC LIMIT 15"
+          "rawSql": "SELECT r.name, r.source, g.stars, g.stars_gained_1d AS \"+1d\", g.stars_gained_7d AS \"+7d\", g.stars_growth_pct_7d AS \"%7d\", g.days_observed AS days FROM analytics_marts.fct_repository_growth g JOIN raw_repositories r ON r.id = g.repository_id WHERE g.stars_gained_1d IS NOT NULL ORDER BY g.stars_gained_1d DESC LIMIT 15"
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "minWidth": 95 } },
+        "defaults": { "custom": { "minWidth": 50 } },
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "name" },
-            "properties": [{ "id": "custom.width", "value": 190 }]
+            "properties": [{ "id": "custom.width", "value": 165 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "source" },
+            "properties": [{ "id": "custom.width", "value": 70 }]
           }
         ]
       }
@@ -327,16 +336,16 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "minWidth": 70 } },
+        "defaults": { "custom": { "minWidth": 50 } },
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "owner" },
-            "properties": [{ "id": "custom.width", "value": 150 }]
+            "properties": [{ "id": "custom.width", "value": 120 }]
           },
           {
             "matcher": { "id": "byName", "options": "project" },
             "properties": [
-              { "id": "custom.width", "value": 200 },
+              { "id": "custom.width", "value": 155 },
               {
                 "id": "links",
                 "value": [
@@ -351,7 +360,7 @@
           },
           {
             "matcher": { "id": "byName", "options": "host" },
-            "properties": [{ "id": "custom.width", "value": 100 }]
+            "properties": [{ "id": "custom.width", "value": 88 }]
           },
           {
             "matcher": { "id": "byName", "options": "target_url" },
@@ -374,11 +383,19 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "minWidth": 95 } },
+        "defaults": { "custom": { "minWidth": 55 } },
         "overrides": [
           {
             "matcher": { "id": "byName", "options": "name" },
-            "properties": [{ "id": "custom.width", "value": 200 }]
+            "properties": [{ "id": "custom.width", "value": 165 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "source" },
+            "properties": [{ "id": "custom.width", "value": 70 }]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "created|found" },
+            "properties": [{ "id": "custom.width", "value": 92 }]
           }
         ]
       }
@@ -393,14 +410,14 @@
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT source, repository_count AS rows, with_stars, with_downloads, with_language, round(avg_days_since_update) AS avg_days_stale FROM analytics_marts.dim_sources ORDER BY source"
+          "rawSql": "SELECT source, repository_count AS rows, with_stars AS stars, with_downloads AS downloads, with_language AS language, round(avg_days_since_update) AS stale FROM analytics_marts.dim_sources ORDER BY source"
         }
       ],
       "fieldConfig": {
-        "defaults": { "custom": { "minWidth": 105 } },
+        "defaults": { "custom": { "minWidth": 55 } },
         "overrides": [
           {
-            "matcher": { "id": "byRegexp", "options": "with_.*" },
+            "matcher": { "id": "byRegexp", "options": "^(stars|downloads|language)$" },
             "properties": [
               { "id": "custom.cellOptions", "value": { "type": "color-text" } },
               {
