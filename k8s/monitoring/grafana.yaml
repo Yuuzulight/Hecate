@@ -83,13 +83,19 @@ spec:
             - name: web
               containerPort: 3000
           env:
-            # - Anonymous access is off, and the admin password comes from the
-            #   same secret as everything else. Turning it on for convenience
-            #   meant shipping a default of anonymous-with-admin-rights, which
-            #   is fine right up until the first time it is port-forwarded
-            #   somewhere shared.
+            # - Anonymous access is on, but read-only. Checking a dashboard
+            #   daily for a month is not worth a login each time, and the
+            #   thing being protected is a list of public repositories.
+            #
+            #   Viewer, explicitly. The trap here is anonymous-with-admin-
+            #   rights, which is fine right up until the first time it is
+            #   port-forwarded somewhere shared - anyone reaching it could
+            #   then edit dashboards and read the datasource config. Editing
+            #   still needs the admin password from the secret.
             - name: GF_AUTH_ANONYMOUS_ENABLED
-              value: "false"
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
             - name: GF_SECURITY_ADMIN_USER
