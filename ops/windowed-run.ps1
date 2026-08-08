@@ -21,6 +21,17 @@ param(
     # - For running it by hand when you want to poke at the cluster afterwards.
     [switch]$KeepDockerRunning,
 
+    # - Bring the cluster up and stop there. For looking at the dashboard or
+    #   querying the database after the day's run has already happened and shut
+    #   Docker down again. Running the whole thing with -KeepDockerRunning
+    #   would work, but it would collect a second time and put a second entry
+    #   in the log for a day that only had one real run.
+    #
+    #   Here rather than in a caller because starting Docker on this machine
+    #   means clearing the stale sockets first, and that knowledge should live
+    #   in one place.
+    [switch]$StartOnly,
+
     # - Collection takes about three minutes on a cold cache. The ceiling is
     #   for a source hanging, not for normal slowness.
     [int]$JobTimeoutSeconds = 1200
@@ -279,6 +290,16 @@ try {
     if (-not (Wait-ForDatabase)) { throw 'postgres never accepted a connection' }
     Write-Step 'database answering'
 
+    if ($StartOnly) {
+        # - Nothing collected, so nothing to log about the day. Marked ok so the
+        #   exit code says the cluster came up, which is all that was asked for.
+        $run.ok = $true
+        Write-Step 'cluster is up and staying up (StartOnly)'
+        Write-Step 'dashboard: kubectl port-forward svc/grafana 3000:3000 -n hecate'
+        Write-Step 'when finished: docker desktop stop'
+        return
+    }
+
     Remove-PreviousWindowedJobs
 
     $stamp = Get-Date -Format 'yyyyMMddHHmm'
@@ -320,15 +341,20 @@ catch {
     Write-Step "FAILED: $($run.error)"
 }
 finally {
-    if (-not $run.docker_was_up -and -not $KeepDockerRunning) {
+    if (-not $run.docker_was_up -and -not $KeepDockerRunning -and -not $StartOnly) {
         Write-Step 'stopping docker desktop'
         Stop-DockerSafely
         $run.docker_stopped = $true
     }
 
-    $run.finished_at = (Get-Date).ToString('o')
-    ($run | ConvertTo-Json -Depth 5 -Compress) | Out-File -FilePath $LogFile -Encoding utf8 -Append
-    Write-Step ("done, ok={0}, log -> {1}" -f $run.ok, $LogFile)
+    # - StartOnly collected nothing, so it writes nothing. An entry with no
+    #   jobs and no snapshot would read as a run that failed to collect, and
+    #   the health check counts entries to find missing days.
+    if (-not $StartOnly) {
+        $run.finished_at = (Get-Date).ToString('o')
+        ($run | ConvertTo-Json -Depth 5 -Compress) | Out-File -FilePath $LogFile -Encoding utf8 -Append
+        Write-Step ("done, ok={0}, log -> {1}" -f $run.ok, $LogFile)
+    }
 }
 
 if (-not $run.ok) { exit 1 }

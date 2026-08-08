@@ -5,6 +5,7 @@ Copies of the prompts driving the two scheduled checks against the running clust
 | file | when | what it does |
 |---|---|---|
 | `hecate-daily-health.md` | daily, 13:30 | Did the day's run happen? Report gaps. |
+| `hecate-dashboard-check.md` | once, 9 Aug 2026 | First look after a run nobody triggered. |
 | `hecate-growth-check.md` | once, 15 Aug 2026 | Whether growth and momentum mean anything yet, plus a dashboard review. |
 
 The daily one reads `%LOCALAPPDATA%\Hecate\run-log.jsonl` rather than the cluster. Docker is shut down most of the time — `../windowed-run.ps1` starts it, runs the day's jobs and stops it again — so a check that queried Kubernetes directly would report a false gap every day, having found nothing running.
