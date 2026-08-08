@@ -17,6 +17,10 @@ spec:
   #   rebuild at 03:00, so the two dbt jobs cannot meet.
   schedule: "0 5 * * 0"
 
+  # - Suspended; ops/windowed-run.ps1 appends it to the sequence on Sundays.
+  #   See 03-cronjob.yaml.
+  suspend: true
+
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3

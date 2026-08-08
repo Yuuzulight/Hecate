@@ -23,6 +23,16 @@ spec:
   # 02:00 UTC, when the APIs are quiet.
   schedule: "0 2 * * *"
 
+  # - Suspended, because the machine is not on all day and a fixed UTC time
+  #   would be missed more often than met. ops/windowed-run.ps1 starts Docker
+  #   once a day, creates a Job from this template, and shuts it down again.
+  #   The spec below is still the only definition of the job; the schedule is
+  #   what it would run at if the cluster were always up.
+  #
+  #   Back to the clock:
+  #   kubectl patch cronjob hecate-daily -n hecate -p '{"spec":{"suspend":false}}'
+  suspend: true
+
   # - A run that overruns should not have the next one land on top of it. Both
   #   would be writing the same rows, and the upsert would have them fighting
   #   over the same keys.

@@ -21,6 +21,10 @@ spec:
   #   rebuilding against a half-loaded table is worse than rebuilding late.
   schedule: "0 3 * * *"
 
+  # - Suspended; ops/windowed-run.ps1 runs it straight after collection rather
+  #   than an hour later. See 03-cronjob.yaml for why.
+  suspend: true
+
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

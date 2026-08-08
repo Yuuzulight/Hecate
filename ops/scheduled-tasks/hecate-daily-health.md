@@ -1,54 +1,43 @@
 ---
 name: hecate-daily-health
-description: Daily check that Hecate's overnight collection actually ran, catching gaps while they can still be acted on
+description: Daily check that Hecate's windowed run actually happened, read from its log rather than the cluster
 ---
 
-Check that Hecate's overnight collection ran. Keep this short — it is a health check, not an analysis.
+Check that Hecate's daily run happened. Keep this short — it is a health check, not an analysis.
 
 ## Context (this run starts fresh)
 
-Hecate is a repository-intelligence pipeline at `F:\GitHub Projects\Hecate`, running on Docker Desktop's Kubernetes in namespace `hecate`. Four CronJobs run: extraction at 02:00, dbt rebuild at 03:00, backup at 04:00, and a full refresh Sundays at 05:00.
+Hecate is a repository-intelligence pipeline at `F:\GitHub Projects\Hecate`. It runs on Docker Desktop's Kubernetes in namespace `hecate`, but **Docker is not running most of the time and that is intentional**. A Windows scheduled task runs `ops/windowed-run.ps1` once a day, which starts Docker, runs collection, dbt and the backup back to back, checks a snapshot landed, then shuts Docker down again. The Kubernetes CronJobs are suspended because a fixed UTC time would be missed more often than met.
 
-Those times are **UTC** — the manifests set no `timeZone`, so the schedules are not the machine's local clock. On a UTC+8 machine that is 10:00, 11:00, 12:00 and 13:00 local. This check is deliberately scheduled at 13:30 local, after all four have run; do not move it earlier, or it will report the current day as missing before that day has been collected.
+So **do not expect the cluster to be up, and do not start Docker**. A stopped Docker is the normal state, not a finding.
 
-`captured_on` is the UTC date too, so `current_date` in the queries below lines up with it. Both shift together — no conversion is needed anywhere in this check.
+The user is accumulating snapshot history to watch growth over a month, starting 2026-08-07. **A missed day is a permanent gap** — snapshots describe a moment that has passed and cannot be backfilled. Catching a break the day after is the entire point of this check.
 
-The user is accumulating snapshot history to watch growth over a month, starting 2026-08-07. **A missed day is a permanent gap** — snapshots describe a moment that has passed and cannot be backfilled. Catching a break the morning after is the entire point of this check; catching it a fortnight later is useless.
+## What to read
 
-## What to check
-
-If Docker Desktop or the cluster is not running, say so and stop — that is the finding, and it means last night was probably missed.
+Every run appends one JSON line to:
 
 ```
-kubectl exec -n hecate postgres-0 -- psql -U dataflow -d hecate -c "<SQL>"
+C:\Users\User\AppData\Local\Hecate\run-log.jsonl
 ```
 
-1. **Was there a snapshot for yesterday and today?**
-   `SELECT captured_on, count(*) FROM repository_snapshots WHERE captured_on > current_date - 8 GROUP BY captured_on ORDER BY captured_on;`
-   Any missing date in that range is the headline.
+Read the last few lines. Each has `started_at`, `ok`, `snapshot_date`, `snapshot_rows`, `repositories`, `discovered`, a `jobs` array with one entry per job, and `error` when something went wrong.
 
-2. **Did the jobs run?**
-   `kubectl get cronjob -n hecate -o custom-columns="NAME:.metadata.name,SCHEDULE:.spec.schedule,LAST:.status.lastScheduleTime"`
-   A `lastScheduleTime` older than yesterday means it is not firing.
+1. **Did today's run happen, and did it work?**
+   The newest entry's `started_at` should be today. `ok` is true only when every job completed *and* a snapshot exists for the current UTC date — a run can have all jobs succeed and still not be `ok`, which is the case worth catching.
 
-   `<none>` is different and is not necessarily a fault: it means the job has
-   never run, which is expected for one created after its slot had passed for
-   the day. Treat `<none>` as a problem only once its scheduled time has come
-   round at least once since it was created.
+2. **Any gaps?** Walk the `snapshot_date` values across recent entries. A date missing from the sequence is the headline. `snapshot_date` is a UTC date; the machine is UTC+8, so a run any time from 08:00 local onward lands on the current UTC day.
 
-3. **Any failed jobs?**
-   `kubectl get pods -n hecate --field-selector=status.phase=Failed`
+3. **Did any job fail?** Check the `jobs` array. `detail` says `complete`, `failed (n attempts)`, or `still running after Ns`.
 
-4. **Quick numbers:** total repositories, and how many days of history exist so far.
-   `SELECT (SELECT count(*) FROM raw_repositories) AS repos, (SELECT count(DISTINCT captured_on) FROM repository_snapshots) AS days;`
+4. **Is it growing?** `repositories` and `discovered` across the last few entries. Flat `discovered` for a week is worth mentioning; it is what the discovery-idle alert would catch if the cluster were up to fire it.
 
-5. **Alerts:** anything firing.
-   `kubectl exec -n hecate deploy/prometheus -- wget -qO- http://localhost:9090/api/v1/alerts` — or skip if that fails, it is not the important part.
+If the log file does not exist, or its newest entry is more than about 36 hours old, the scheduled task itself is not running. Say that plainly — it means nothing is collecting and every day from here is being lost.
 
 ## Reporting
 
-Three or four lines when everything is fine: days of history, repository count, and that last night ran. Do not write a report about a healthy system.
+Three or four lines when everything is fine: days of history, repository count, and that the last run was clean. Do not write a report about a healthy system.
 
-If a day is missing or a job stopped firing, lead with that and say how many days of history have been lost. Suggest the obvious cause — the machine asleep, Docker closed — rather than investigating deeply.
+If a day is missing or the task has stopped firing, lead with that and say how many days have been lost. Suggest the obvious cause — machine off all day, scheduled task disabled, Docker failing to start — rather than investigating deeply.
 
-Do not change code or push anything. This is an observation run.
+Do not start Docker, change code, or push anything. This is an observation run against a log file.

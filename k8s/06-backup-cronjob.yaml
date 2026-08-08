@@ -28,6 +28,11 @@ spec:
   # - After the dbt rebuild, so a dump captures a database in a consistent
   #   state rather than mid-transformation.
   schedule: "0 4 * * *"
+
+  # - Suspended; ops/windowed-run.ps1 runs it last in the sequence, which
+  #   preserves the ordering this schedule was chosen for. See 03-cronjob.yaml.
+  suspend: true
+
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

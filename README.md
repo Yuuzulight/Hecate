@@ -172,7 +172,7 @@ kubectl create configmap grafana-dashboard -n hecate --from-file=hecate.json=k8s
 
 The autoscaler needs metrics-server, which Docker Desktop doesn't ship — the install and the `--kubelet-insecure-tls` patch it needs are documented at the top of `k8s/04-hpa.yaml`.
 
-Four jobs then run on their own:
+Four jobs do the day's work:
 
 | | | |
 |---|---|---|
@@ -181,7 +181,7 @@ Four jobs then run on their own:
 | 04:00 | `hecate-backup` | dump the database, keep seven |
 | Sun 05:00 | `hecate-dbt-full` | full refresh, clears incremental drift |
 
-Those are UTC. No `timeZone` is set on the CronJobs, so they don't follow the machine's clock — worth knowing before you conclude a run was missed. `captured_on` on the snapshots is the UTC date as well, which is what you want: both move together, so a day is a day regardless of where the machine is.
+Those times are UTC. No `timeZone` is set, so they don't follow the machine's clock — worth knowing before you conclude a run was missed. `captured_on` on the snapshots is the UTC date as well, which is what you want: both move together, so a day is a day regardless of where the machine is.
 
 To trigger one rather than waiting:
 
@@ -190,6 +190,24 @@ kubectl create job hecate-now --from=cronjob/hecate-daily -n hecate && kubectl l
 ```
 
 Then `kubectl port-forward svc/grafana 3000:3000 -n hecate` for the dashboard.
+
+### If the cluster isn't up all day
+
+The four CronJobs ship **suspended**, because a fixed UTC time is no use on a machine that gets shut down — the schedule gets missed more often than met, and a missed snapshot is a permanent hole in the history.
+
+`ops/windowed-run.ps1` covers that case. It starts Docker Desktop, waits for the cluster, creates a Job from each CronJob template in order, checks a snapshot actually landed for today, and shuts Docker down again — about fifteen minutes rather than leaving it running. If Docker was already up when it started, it leaves it up.
+
+```bash
+powershell -ExecutionPolicy Bypass -File ops/windowed-run.ps1
+```
+
+Point Task Scheduler at that once a day with *run as soon as possible after a missed start*, and the machine only has to be on at some point, not at a particular time. Every run appends a JSON line to `%LOCALAPPDATA%\Hecate\run-log.jsonl` with the job results and row counts, so you can see what happened without starting anything.
+
+If the machine does stay on, unsuspend them and ignore all of the above:
+
+```bash
+kubectl patch cronjob hecate-daily -n hecate -p '{"spec":{"suspend":false}}'
+```
 
 ## Monitoring
 
