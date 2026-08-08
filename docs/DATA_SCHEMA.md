@@ -130,6 +130,8 @@ Plus the measures and descriptive columns carried through from staging.
 
 The star figures are computed only over sources that have stars, and `starred_count` says how many rows that was. Without that, a language with more packages than repositories gets a median of zero and an average diluted towards it — Python read as a median of 0 across 14 rows until the aggregate was restricted to the 4 that actually carry stars.
 
+`repository_count` has a subtler version of the same problem, and it is the one to watch when comparing languages. Every PyPI package is Python by definition, so those rows say nothing about what anyone chose to write in — they say the row came from a Python package registry. Counting them put Python at 619 against TypeScript's 80, of which 502 were PyPI. `starred_count` is the honest comparison because it is restricted to the sources that report a language as an observation rather than a tautology; on the same data it reads Python 117, TypeScript 80.
+
 **dim_sources** — one row per source. Alongside the aggregates it carries `with_stars`, `with_downloads`, `with_language` and `with_created_at`, which say how many rows from that source actually populate each field. Check this before any cross-source comparison.
 
 There's no date dimension. There was one, and nothing ever joined to it — the fact table carries no date key and no panel used it, so it was 2,400 rows rebuilt every run to answer questions nobody asked. If a genuine time series shows up, a spine can come back with it.
@@ -139,11 +141,14 @@ There's no date dimension. There was one, and nothing ever joined to it — the 
 Which languages carry the most weight:
 
 ```sql
-SELECT language_display, repository_count, median_stars, max_stars
+SELECT language_display, starred_count, median_stars, max_stars
 FROM analytics_marts.dim_languages
-ORDER BY repository_count DESC
+WHERE starred_count > 0
+ORDER BY starred_count DESC
 LIMIT 10;
 ```
+
+`starred_count` rather than `repository_count`, for the reason above.
 
 Popular but possibly abandoned — high stars, no activity in a year:
 

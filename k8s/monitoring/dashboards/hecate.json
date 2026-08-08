@@ -233,14 +233,14 @@
     {
       "type": "barchart",
       "title": "Top languages",
-      "description": "Current snapshot. Only GitHub and PyPI report a language, so this covers those two.",
+      "description": "GitHub and GitLab only. PyPI is excluded deliberately: every package there is Python by definition, so counting those rows measures which registry a project came from rather than what it is written in. Including them put Python at 619 against TypeScript's 80, of which 502 were PyPI saying nothing.",
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 20 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
       "targets": [
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT language_display AS language, repository_count FROM analytics_marts.dim_languages ORDER BY repository_count DESC, language LIMIT 10"
+          "rawSql": "SELECT language_display AS language, starred_count AS repositories FROM analytics_marts.dim_languages WHERE starred_count > 0 ORDER BY starred_count DESC, language LIMIT 10"
         }
       ],
       "options": {
@@ -392,6 +392,38 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Stars gained per day, by language",
+      "description": "Which language ecosystems are attracting attention, day by day. Counting repositories per language instead would draw a flat line: projects are never removed from the tracked set, so the mix only accumulates and cannot show one language displacing another. Stars move daily, so this does. The first day is null rather than zero - there is nothing to subtract from - and PyPI is excluded for the same reason as the bar chart above. Treat a single day as noise; the shape needs a week.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 46 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT time, metric, value FROM (SELECT s.captured_on::timestamp AS time, r.language AS metric, sum(s.stars) - lag(sum(s.stars)) OVER (PARTITION BY r.language ORDER BY s.captured_on::timestamp) AS value FROM repository_snapshots s JOIN raw_repositories r ON r.id = s.repository_id WHERE r.language IS NOT NULL AND r.source IN ('github', 'gitlab') AND r.language IN (SELECT language FROM raw_repositories WHERE language IS NOT NULL AND source IN ('github', 'gitlab') GROUP BY language ORDER BY count(*) DESC LIMIT 8) GROUP BY 1, 2) d WHERE value IS NOT NULL ORDER BY time, metric"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false
+          },
+          "unit": "short"
+        },
+        "overrides": []
       }
     }
   ]
