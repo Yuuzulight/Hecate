@@ -23,9 +23,21 @@ $ErrorActionPreference = 'Stop'
 $script = Join-Path (Split-Path $PSScriptRoot -Parent) 'ops\windowed-run.ps1'
 if (-not (Test-Path $script)) { throw "cannot find $script" }
 
+# - Wrapped in cmd so stdout and stderr land in a file. A scheduled task runs
+#   with no console, and the JSON log is only written at the very end - so a
+#   run that hangs or is killed leaves nothing at all behind. That happened,
+#   and cost an hour of guessing at a task that reported success. This file is
+#   overwritten each run and shows how far the last one got, live.
+#   powershell.exe is deliberately unquoted. When the string after /c starts
+#   with a quote, cmd strips the outer pair and the rest of the command comes
+#   apart - the task exits 1 having run nothing and created no trace file,
+#   which looks exactly like the script failing instantly.
+$trace = Join-Path (Split-Path $script -Parent) 'logs\last-run.txt'
+$inner = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $script
+
 $action = New-ScheduledTaskAction `
-    -Execute 'powershell.exe' `
-    -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $script)
+    -Execute 'cmd.exe' `
+    -Argument ('/c {0} > "{1}" 2>&1' -f $inner, $trace)
 
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 

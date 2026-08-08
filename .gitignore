@@ -21,3 +21,6 @@ dbt/logs/
 .idea/
 .vscode/
 dbt/.user.yml
+
+# Windowed-run logs. Machine-local history of what ran and when.
+ops/logs/

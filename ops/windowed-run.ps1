@@ -34,7 +34,14 @@ param(
 #   raised with an explicit throw, which the try/catch below still catches.
 $ErrorActionPreference = 'Continue'
 
-$LogDir  = Join-Path $env:LOCALAPPDATA 'Hecate'
+# - Next to the script, not under %LOCALAPPDATA%. AppData is redirected for
+#   packaged applications, so a log written there by the scheduled task and a
+#   log read there by something else can be two different files that both
+#   report the path they were asked for. That cost an hour: the task wrote
+#   successfully, said so, and the entry was nowhere to be found.
+#
+#   A path on the repo drive is the same file for everyone that opens it.
+$LogDir  = Join-Path $PSScriptRoot 'logs'
 $LogFile = Join-Path $LogDir 'run-log.jsonl'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 
@@ -172,19 +179,52 @@ function Invoke-HecateJob($CronJob, $Stamp) {
         return [ordered]@{ job = $CronJob; ok = $false; detail = 'could not create job' }
     }
 
-    kubectl wait --for=condition=complete "job/$name" -n hecate --timeout="${JobTimeoutSeconds}s" 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        return [ordered]@{ job = $CronJob; ok = $true; detail = 'complete' }
+    # - Polled rather than `kubectl wait --for=condition=complete`, which only
+    #   ever returns on success or timeout. A job that fails in the first
+    #   minute would sit there for the full twenty, and the whole point of a
+    #   short window is not spending it waiting for something already dead.
+    #
+    #   Logs are grabbed the moment failure is seen, because the controller
+    #   deletes the pod within a second or two of the backoff limit and after
+    #   that there is nothing left to explain the night with.
+    $deadline = (Get-Date).AddSeconds($JobTimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $succeeded = kubectl get "job/$name" -n hecate -o 'jsonpath={.status.succeeded}' 2>$null
+        if ($succeeded -eq '1') {
+            return [ordered]@{ job = $CronJob; ok = $true; detail = 'complete' }
+        }
+
+        $failed = kubectl get "job/$name" -n hecate -o 'jsonpath={.status.failed}' 2>$null
+        if ($failed -and [int]$failed -ge 1) {
+            $log = kubectl logs "job/$name" -n hecate --tail=15 2>$null
+            $tail = ''
+            if ($log) { $tail = ' | ' + (($log | Select-Object -Last 5) -join ' ') }
+            return [ordered]@{ job = $CronJob; ok = $false; detail = "failed after $failed attempt(s)$tail" }
+        }
+
+        Start-Sleep -Seconds 5
     }
 
-    # - wait returns non-zero for a failure and for a timeout alike, so ask the
-    #   job which it was. A timeout that is still running is worth saying so.
-    $failed = kubectl get "job/$name" -n hecate -o 'jsonpath={.status.failed}' 2>$null
-    $active = kubectl get "job/$name" -n hecate -o 'jsonpath={.status.active}' 2>$null
-    $detail = 'did not complete'
-    if ($failed) { $detail = "failed ($failed attempts)" }
-    elseif ($active) { $detail = "still running after ${JobTimeoutSeconds}s" }
-    return [ordered]@{ job = $CronJob; ok = $false; detail = $detail }
+    return [ordered]@{ job = $CronJob; ok = $false; detail = "still running after ${JobTimeoutSeconds}s" }
+}
+
+# - The readiness probe is not enough on a cold start. Bringing Docker up
+#   re-creates every pod on the node, and `kubectl wait --for=condition=ready`
+#   can return against the Ready status the pod object still carries from
+#   before that happened. It did: postgres restarted at 07:55:40, the job
+#   started 15 seconds later, and the container died on connect twice before
+#   hitting its backoff limit.
+#
+#   So ask the database, rather than asking Kubernetes about the database.
+#   A query that answers is the only readiness that matters here.
+function Wait-ForDatabase([int]$TimeoutSeconds = 300) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        kubectl exec -n hecate postgres-0 -- psql -U dataflow -d hecate -t -A -c 'SELECT 1' 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0) { return $true }
+        Start-Sleep -Seconds 5
+    }
+    return $false
 }
 
 function Get-Scalar($sql) {
@@ -232,7 +272,12 @@ try {
     Write-Step 'cluster reachable'
 
     kubectl wait --for=condition=ready pod/postgres-0 -n hecate --timeout=300s 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'postgres never became ready' }
+    if ($LASTEXITCODE -ne 0) { throw 'postgres pod never became ready' }
+
+    # - And then actually connect, because the line above can be satisfied by a
+    #   Ready status left over from before the node re-created the pod.
+    if (-not (Wait-ForDatabase)) { throw 'postgres never accepted a connection' }
+    Write-Step 'database answering'
 
     Remove-PreviousWindowedJobs
 

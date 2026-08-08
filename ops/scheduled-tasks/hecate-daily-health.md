@@ -18,8 +18,10 @@ The user is accumulating snapshot history to watch growth over a month, starting
 Every run appends one JSON line to:
 
 ```
-C:\Users\User\AppData\Local\Hecate\run-log.jsonl
+F:\GitHub Projects\Hecate\ops\logs\run-log.jsonl
 ```
+
+It lives on the repo drive rather than under `%LOCALAPPDATA%` on purpose. AppData is redirected for packaged applications, so the same path can be two different files depending on what opens it — the scheduled task wrote entries there that nothing else could see.
 
 Read the last few lines. Each has `started_at`, `ok`, `snapshot_date`, `snapshot_rows`, `repositories`, `discovered`, a `jobs` array with one entry per job, and `error` when something went wrong.
 
