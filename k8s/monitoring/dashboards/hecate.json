@@ -3,7 +3,7 @@
   "uid": "hecate-overview",
   "timezone": "browser",
   "refresh": "1m",
-  "time": { "from": "now-24h", "to": "now" },
+  "time": { "from": "now-30d", "to": "now" },
   "annotations": {
     "list": [
       {
@@ -167,14 +167,14 @@
     {
       "type": "table",
       "title": "Popular but going stale",
-      "description": "High star count, no activity in six months. The question the project exists to answer. Empty is a good result on a small sample of top repositories.",
+      "description": "High star count, no commit in six months, and not archived. Archived is excluded on purpose: the maintainers announcing they have stopped is a different thing from nobody having touched it, and this panel is about the second. Including them put atom at the top of the neglect list, when GitHub retired it deliberately. Read from staging rather than the mart, which does not carry the flag. Empty is a good result on a small sample of top repositories.",
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 11 },
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "postgres" },
       "targets": [
         {
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT name, language, stars, days_since_update AS days_stale FROM analytics_marts.fct_repositories WHERE stars > 5000 AND days_since_update > 180 ORDER BY days_since_update DESC LIMIT 12"
+          "rawSql": "SELECT name, language, stars, days_since_update AS days_stale FROM analytics_staging.stg_repositories WHERE stars > 5000 AND days_since_update > 180 AND NOT archived ORDER BY days_since_update DESC LIMIT 12"
         }
       ],
       "fieldConfig": {
@@ -277,7 +277,7 @@
           {
             "matcher": { "id": "byName", "options": "momentum" },
             "properties": [
-              { "id": "custom.width", "value": 85 },
+              { "id": "custom.width", "value": 100 },
               { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
               {
                 "id": "thresholds",
