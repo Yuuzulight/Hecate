@@ -1,0 +1,137 @@
+# The question-answering service.
+#
+# Numbered 10 rather than 09: the embedding CronJob took that when it landed.
+#
+# On demand, not always on. Since 8 August this cluster is deliberately down
+# outside a two-and-a-half minute window each morning, and standing a service
+# up permanently would reverse a one-day-old decision for something asked a
+# few times a week. Asking a question is:
+#
+#   ops\windowed-run.ps1 -StartOnly     # about thirty seconds from cold
+#   kubectl port-forward svc/hecate-rag 8001:8001 -n hecate
+#   ...ask...
+#   docker desktop stop
+#
+# Which means the uptime target is scoped to "while running" rather than
+# wall-clock, and the under-five-second target is the query rather than the
+# start. Written down here because a 99.5% figure measured against the clock
+# would be a lie about a machine that is off most of the day.
+#
+# Deliberately NOT added to ops\windowed-run.ps1. That window collects,
+# rebuilds and backs up; it has no use for an API, and starting one more thing
+# lengthens a window whose entire point is being short.
+#
+# One replica. The rate limiter in the service is per-process, so a second
+# replica would quietly double the limit, and there is no load here that wants
+# a second replica anyway.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hecate-rag
+  namespace: hecate
+  labels:
+    app: hecate-rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hecate-rag
+  template:
+    metadata:
+      labels:
+        # - What the NetworkPolicy matches on for database access.
+        app: hecate-rag
+    spec:
+      containers:
+        - name: rag
+          # - Its own image. The pipeline image is 51.3 MB and runs a two-minute
+          #   job; LangChain and the Anthropic SDK have no business in it.
+          image: ghcr.io/yuuzulight/hecate-rag:2.0.0
+          ports:
+            - name: http
+              containerPort: 8001
+          env:
+            - name: DB_HOST
+              value: postgres.hecate.svc.cluster.local
+            - name: DB_NAME
+              value: hecate
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: password
+            - name: REDIS_URL
+              value: redis://redis.hecate.svc.cluster.local:6379
+            # - An environment variable rather than anything baked in, so a
+            #   rollback is:
+            #
+            #     kubectl set env deploy/hecate-rag RAG_ENABLED=0 -n hecate
+            #
+            #   rather than a rebuild, a retag and a wait.
+            - name: RAG_ENABLED
+              value: "1"
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secret
+                  key: anthropic-api-key
+                  # - Optional so the pod starts and says what is missing.
+                  #   Required, it sits in CreateContainerConfigError instead,
+                  #   which reports the same fact somewhere nobody is looking.
+                  optional: true
+            # - Only for the similarity block; the evaluation judge is Claude
+            #   and deliberately does not fall back to OpenAI.
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rag-secret
+                  key: openai-api-key
+                  optional: true
+          resources:
+            # - Sized for something that idles. The floor is the import cost:
+            #   LangChain and the Anthropic SDK are most of the resident set
+            #   before a single question arrives.
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            # - /health, never /ask. A probe that asked a question would spend
+            #   money on every check, and with RAG_ENABLED=0 it would get a 503
+            #   and restart the pod in a loop - turning a deliberate rollback
+            #   into an outage.
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hecate-rag
+  namespace: hecate
+  labels:
+    app: hecate-rag
+spec:
+  selector:
+    app: hecate-rag
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001

@@ -38,6 +38,12 @@ spec:
         - podSelector:
             matchLabels:
               app: grafana
+        # - The question-answering service, which reads the same marts. Easy to
+        #   forget: Docker Desktop does not enforce this policy, so leaving it
+        #   out works perfectly here and fails on any cluster that does.
+        - podSelector:
+            matchLabels:
+              app: hecate-rag
       ports:
         - protocol: TCP
           port: 5432

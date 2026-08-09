@@ -68,3 +68,27 @@ jobs:
           labels: ${{ steps.dbt-meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # - And the question-answering service, on the same reasoning again:
+      #   LangChain, the Anthropic SDK and FastAPI together outweigh the whole
+      #   pipeline image, and the daily job imports none of them.
+      - name: Tags for the rag image
+        id: rag-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-rag
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push rag
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: rag
+          push: true
+          tags: ${{ steps.rag-meta.outputs.tags }}
+          labels: ${{ steps.rag-meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

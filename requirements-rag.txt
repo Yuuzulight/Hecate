@@ -9,6 +9,11 @@
 # every current Claude model, so the chain would have targeted an SDK that
 # cannot call the model it is written for.
 
+# - The service still talks to PostgreSQL and Redis, so it needs the base set
+#   as well. Included here rather than listed twice, so the image build and CI
+#   are each one line and cannot drift apart.
+-r requirements.txt
+
 anthropic==0.121.0
 langchain==1.3.14
 langchain-anthropic==1.5.4

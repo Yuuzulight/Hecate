@@ -44,6 +44,37 @@ COPY --chown=hecate:hecate dbt/ ./dbt/
 CMD ["dbt", "build", "--project-dir", "/app/dbt", "--profiles-dir", "/app/dbt"]
 
 
+# - Also before the pipeline stage, and for the same reason as dbt above: an
+#   untargeted build produces the last stage, and that has to stay the pipeline.
+#
+# A third image rather than a fatter one. LangChain, the Anthropic SDK and
+# FastAPI together outweigh the entire pipeline image, and the daily job
+# imports none of them.
+FROM python:3.11-slim AS rag
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/home/hecate/.local/bin:$PATH
+
+RUN useradd --create-home --uid 1000 hecate
+
+USER hecate
+WORKDIR /app
+
+# - Both files, even though only one is named: requirements-rag.txt starts with
+#   `-r requirements.txt`, so the service gets psycopg2 and redis too.
+COPY --chown=hecate:hecate requirements.txt requirements-rag.txt ./
+RUN pip install --user --no-cache-dir -r requirements-rag.txt
+
+COPY --chown=hecate:hecate pipeline/ ./pipeline/
+
+EXPOSE 8001
+
+# - No HEALTHCHECK here. Kubernetes probes /health over HTTP, and a second
+#   mechanism that can disagree with the first is worse than one.
+CMD ["python", "-m", "pipeline.rag.api"]
+
+
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
