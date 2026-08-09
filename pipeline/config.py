@@ -87,6 +87,15 @@ class Config:
         #   back, and every test must all work without a key.
         self.anthropic_api_key = _optional("ANTHROPIC_API_KEY")
 
+        # - A rollback switch, so unlike NAME_MATCHING it defaults on: you set
+        #   it to 0 to stop spending, and a service that had to be switched on
+        #   after every deploy would spend its first hour returning 503 while
+        #   somebody worked out why. Off means /ask refuses before the chain is
+        #   touched - a flag that still pays for tokens is not a rollback.
+        self.rag_enabled = _optional("RAG_ENABLED", "1").lower() not in (
+            "0", "false", "no", "off",
+        )
+
     def __repr__(self) -> str:
         # - Never let the password reach a log line or a traceback.
         return (

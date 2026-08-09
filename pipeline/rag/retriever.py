@@ -397,6 +397,38 @@ class WarehouseRetriever:
             if repository_id in by_id
         ]
 
+    # ---- reading the evaluation history
+
+    def recent_evaluations(self, limit: int = 50) -> list[dict]:
+        """The most recent scores written by the evaluation run.
+
+        Here rather than on the Evaluator that writes them, and that is not
+        tidiness. Importing that module pulls RAGAS in with it - forty-odd
+        packages including OpenAI's client - and the service that answers
+        questions has no business carrying the thing that grades them. This is
+        a read of one table; the retriever is already the service's way of
+        reading tables.
+        """
+        try:
+            return self._rows(
+                """
+                SELECT question_id, question, faithfulness, relevance,
+                       hallucination, judge_model, evaluated_at
+                FROM rag_evaluations
+                ORDER BY evaluated_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+        except psycopg2.Error as exc:
+            # - The table not existing yet is an ordinary state, but it still
+            #   aborts the transaction. Without the rollback every later query
+            #   on this connection fails too, and the service looks broken
+            #   because nobody has run an evaluation.
+            if self.conn is not None:
+                self.conn.rollback()
+            raise LoadError(f"could not read evaluations: {exc}") from exc
+
     # ---- what the chain actually calls
 
     def context_for(self, question: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:

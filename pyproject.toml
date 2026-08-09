@@ -29,6 +29,8 @@ rag = [
     "langchain==1.3.14",
     "langchain-anthropic==1.5.4",
     "langchain-core==1.5.3",
+    "fastapi==0.141.1",
+    "uvicorn==0.52.1",
 ]
 # - Split off again: RAGAS brings about forty packages with it, including
 #   OpenAI's client, and the service that answers questions has no use for the
