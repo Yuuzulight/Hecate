@@ -155,3 +155,13 @@ Twitter/X was ruled out earlier on cost. Read access has been paid-only since 20
 The harder half is knowing what a post refers to. Matching on a link is reliable and covers most technical posts. Matching on a name is not — `requests` is a PyPI package, a GitHub repository, and an ordinary English word, and a fuzzy match would attach attention to the wrong project quietly and plausibly. So link matching first, and name matching only once the link-resolved set can serve as ground truth to measure the error rate against.
 
 This also forces the snapshot table. A mention count without a time dimension cannot distinguish one viral post from sustained interest, so the history that growth rate and trend score always needed stops being optional.
+
+## Why there is a vector store
+
+Because it was worth learning to build one, not because the data needed it. That is the whole reason and it is better written down than implied.
+
+Retrieval here is structured SQL against the marts. The questions this dataset gets asked — what is growing, what is being discussed, what is popular and going stale — are aggregates, and no nearest-neighbour lookup surfaces an aggregate. The corpus is 44k tokens with a median description of 55 characters; there is not enough text for similarity to be doing much work, and picking the right rows beats finding similar ones at this size.
+
+So the embeddings are built to be an addition rather than a foundation. Similarity is one more block alongside the structured ones, labelled as similarity everywhere it appears, and capped smaller than the rest so five weak rows cannot outweigh seven strong blocks. Search swallows every error it can hit. Dropping every stored vector changes what an answer cites, not whether there is one — which is the property that makes it safe to have built something the data did not ask for.
+
+The cost discipline is real even if the scale is not. Only rows whose text has changed are re-embedded, so the first run does the corpus and every run after does the handful of descriptions that moved; vectors are shortened to 256 dimensions because the full 1536 would be 60MB of JSON against a Redis capped at 128MB. Re-embedding everything nightly was the original plan, and it was the mistake behind the original cost estimate.

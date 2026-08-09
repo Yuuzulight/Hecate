@@ -75,6 +75,13 @@ class Config:
         #   a broken one: the retriever answers from PostgreSQL either way.
         self.redis_url = _optional("REDIS_URL")
 
+        # - Optional for the same reason. Without it nothing gets embedded and
+        #   the similarity block is simply absent; every structured block still
+        #   answers. The embedding job says so and exits non-zero, because a
+        #   job that quietly does nothing is the failure this project keeps
+        #   finding.
+        self.openai_api_key = _optional("OPENAI_API_KEY")
+
     def __repr__(self) -> str:
         # - Never let the password reach a log line or a traceback.
         return (

@@ -1,0 +1,86 @@
+# Keeps the embeddings current, after the day's collection.
+#
+# Only rows whose text has changed are sent, so the first run does the whole
+# corpus and every run after it does the handful of descriptions that moved.
+# That is the difference between a few cents once and a few cents every night.
+#
+# Optional in every sense. ops/windowed-run.ps1 treats a failure here as not
+# counting against the day, because similarity is an addition to the context
+# rather than part of it - with no embeddings at all the chain still answers,
+# it just stops citing projects that merely read alike.
+#
+# NOT VERIFIED against a live API: built without an OPENAI_API_KEY available.
+# The behaviour under a missing key is covered by tests; token counts, cost,
+# and the shape of a real response are not. Needs one live run.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hecate-embed
+  namespace: hecate
+spec:
+  # - After collection and dbt, on the same reasoning as the rest: it reads
+  #   raw_repositories, which the extraction job has finished writing by then.
+  schedule: "30 3 * * *"
+
+  # - Suspended like the others; the windowed run creates the Job. See
+  #   03-cronjob.yaml for why the schedule above is documentation rather than
+  #   something that fires.
+  suspend: true
+
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+
+  jobTemplate:
+    spec:
+      # - One retry, not three. A failure here is usually a missing key or a
+      #   billing problem, and neither improves by being asked again.
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            # - What the NetworkPolicy matches on for database access.
+            app: hecate-pipeline
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: embed
+              image: ghcr.io/yuuzulight/hecate:1.2.0
+              command: ["python", "-m", "pipeline.rag.embeddings"]
+              env:
+                - name: DB_HOST
+                  value: postgres.hecate.svc.cluster.local
+                - name: DB_NAME
+                  value: hecate
+                - name: DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: username
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: password
+                - name: REDIS_URL
+                  value: redis://redis.hecate.svc.cluster.local:6379
+                - name: OPENAI_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: rag-secret
+                      key: openai-api-key
+                      # - Optional so a cluster without the secret still starts
+                      #   the pod and gets a log line saying the key is
+                      #   missing. Required, it would sit in
+                      #   CreateContainerConfigError instead, which says the
+                      #   same thing somewhere nobody is looking.
+                      optional: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

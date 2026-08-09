@@ -23,6 +23,7 @@ from pipeline.exceptions import LoadError
 from pipeline.logger import get_logger
 from pipeline.matching import name_candidates
 from pipeline.rag.cache import ContextCache, context_key
+from pipeline.rag.embeddings import EmbeddingStore
 
 # - Enough rows to reason over, few enough to stay well inside a prompt. The
 #   growth tables have a long tail of single-star movements below this, which
@@ -32,6 +33,11 @@ DEFAULT_LIMIT = 10
 # - Past this many named projects it is not a question about projects, and
 #   pulling a profile for each stops being context and starts being a dump.
 MAX_NAMED_REPOSITORIES = 5
+
+# - Smaller than the rest. Similarity over 55-character descriptions is a weak
+#   signal, and ten weak rows next to seven strong blocks invites the model to
+#   treat them as evidence.
+SIMILAR_LIMIT = 5
 
 
 def _plain(value):
@@ -48,11 +54,17 @@ def _plain(value):
 class WarehouseRetriever:
     """Reads the marts and returns bounded, already-summarised context."""
 
-    def __init__(self, config: Config, cache: ContextCache | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        cache: ContextCache | None = None,
+        embeddings: EmbeddingStore | None = None,
+    ) -> None:
         self.config = config
         self.log = get_logger("rag.retriever")
         self.conn = None
         self.cache = cache if cache is not None else ContextCache(config.redis_url)
+        self.embeddings = embeddings if embeddings is not None else EmbeddingStore(config)
         self._languages: list[str] | None = None
         self._names: dict[str, str] | None = None
 
@@ -332,6 +344,53 @@ class WarehouseRetriever:
             (names,),
         )
 
+    # ---- similarity, which is an addition rather than a source of fact
+
+    def repositories_for_embedding(self) -> list[dict]:
+        """Every repository, as the text the embedding job works from.
+
+        Unbounded, unlike everything above it - this one feeds a batch job
+        rather than a prompt, and skipping rows here would leave them
+        permanently unsearchable rather than merely absent from one answer.
+        """
+        return self._rows(
+            """
+            SELECT id, name, description, language
+            FROM raw_repositories
+            ORDER BY id
+            """
+        )
+
+    def similar_repositories(self, question: str, limit: int = SIMILAR_LIMIT) -> list[dict]:
+        """Projects whose description reads like the question.
+
+        Labelled as similarity everywhere it surfaces, because that is what it
+        is: two projects described in the same words, which is a reason to look
+        rather than a fact about either of them.
+        """
+        scored = self.embeddings.search(question, limit)
+        if not scored:
+            return []
+
+        rows = self._rows(
+            """
+            SELECT id, name, source, language, stars, description
+            FROM raw_repositories
+            WHERE id = ANY(%s)
+            """,
+            ([repository_id for repository_id, _ in scored],),
+        )
+        by_id = {row["id"]: row for row in rows}
+
+        # - Rebuilt in score order, and a row that has since been deleted from
+        #   the database is dropped rather than carried as a stale name from
+        #   Redis.
+        return [
+            {**by_id[repository_id], "similarity": round(score, 3)}
+            for repository_id, score in scored
+            if repository_id in by_id
+        ]
+
     # ---- what the chain actually calls
 
     def context_for(self, question: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
@@ -364,6 +423,13 @@ class WarehouseRetriever:
         names = self.repositories_named_in(question)
         if names and len(names) <= MAX_NAMED_REPOSITORIES:
             context["repositories_asked_about"] = self.profiles_for(names)
+
+        # - Absent rather than empty when there are no embeddings. A key with
+        #   an empty list reads to a model as "we looked and there is nothing
+        #   like it", which is a different claim from not having looked.
+        similar = self.similar_repositories(question)
+        if similar:
+            context["similar_by_description"] = similar
 
         self.log.info(
             "context built",

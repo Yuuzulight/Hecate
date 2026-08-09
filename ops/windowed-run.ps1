@@ -307,11 +307,22 @@ try {
     # - Order matters. Collection writes the rows, dbt rebuilds the models over
     #   them, the backup captures the result. Sunday adds the full refresh so
     #   incremental drift cannot accumulate.
-    $sequence = @('hecate-daily', 'hecate-dbt', 'hecate-backup')
+    #
+    #   Embedding goes last because it is the only one nothing else waits on:
+    #   it writes to Redis, reads rows the others have finished with, and a
+    #   slow API call at the end costs nobody the backup.
+    $sequence = @('hecate-daily', 'hecate-dbt', 'hecate-backup', 'hecate-embed')
     if ((Get-Date).DayOfWeek -eq 'Sunday') { $sequence += 'hecate-dbt-full' }
+
+    # - Jobs whose failure is recorded but does not make the day a failure.
+    #   Similarity is an addition to the context rather than part of it, so a
+    #   missing API key should not turn a good collection into a red run - and
+    #   should not be silent either, which is why it still lands in the log.
+    $optional = @('hecate-embed')
 
     foreach ($cj in $sequence) {
         $r = Invoke-HecateJob $cj $stamp
+        $r.optional = ($optional -contains $cj)
         $run.jobs += $r
         # - Keep going after a failure. A broken dbt run should not cost you
         #   the backup, and the log needs to say what each one did.
@@ -327,7 +338,7 @@ try {
 
     $today = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
     $snapshotIsToday = ($run.snapshot_date -eq $today)
-    $allJobsOk = -not ($run.jobs | Where-Object { -not $_.ok })
+    $allJobsOk = -not ($run.jobs | Where-Object { -not $_.ok -and -not $_.optional })
 
     $run.ok = ($snapshotIsToday -and $allJobsOk)
     if (-not $snapshotIsToday) {

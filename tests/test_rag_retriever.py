@@ -16,7 +16,10 @@ from pipeline.rag.retriever import MAX_NAMED_REPOSITORIES, WarehouseRetriever
 
 @pytest.fixture
 def config(monkeypatch):
-    for name in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME"):
+    # - REDIS_URL and OPENAI_API_KEY too: with either set from a real .env the
+    #   retriever would build a live cache or embedding store and these would
+    #   stop being unit tests.
+    for name in ("DB_HOST", "DB_PORT", "DB_USER", "DB_NAME", "REDIS_URL", "OPENAI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("DB_PASSWORD", "secret")
     return Config()

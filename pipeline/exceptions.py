@@ -23,3 +23,7 @@ class TransformError(HecateError):
 
 class LoadError(HecateError):
     """Writing to the database failed."""
+
+
+class EmbeddingError(HecateError):
+    """Embeddings could not be produced or stored."""
