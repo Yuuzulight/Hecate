@@ -66,7 +66,17 @@ def evaluator_with(faithfulness=0.9, relevance=0.8, fail=None):
 
 @pytest.fixture(autouse=True)
 def _config_env(monkeypatch):
-    monkeypatch.setenv("DB_PASSWORD", "secret")
+    """A password for Config(), without clobbering a real one.
+
+    Setting it unconditionally is what broke this file in CI: the unit tests
+    here never connect, so any string does, but the integration tests further
+    down do connect - and a hardcoded password meant they authenticated as
+    nobody. It passed locally only because the database on this machine
+    accepts any password, which is a green that proves rather less than it
+    appears to.
+    """
+    if not os.environ.get("DB_PASSWORD"):
+        monkeypatch.setenv("DB_PASSWORD", "secret")
 
 
 # ---- the schema and the INSERT agreeing
