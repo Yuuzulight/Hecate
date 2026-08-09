@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<!--
+  Somewhere to ask a question.
+
+  One file, no build step, no framework. It is served by the API itself at /,
+  which means no CORS in the normal case and nothing else to start; opening it
+  straight off disk works too, and falls back to 127.0.0.1:8001.
+
+  Two things it refuses to do quietly. Sources are rendered in full rather than
+  hidden behind a disclosure triangle - a grounded answer whose grounding is
+  hidden looks exactly like an ungrounded one, and the sources are the reason
+  to believe it. And a service that is not running says so, with the command to
+  start it, rather than spinning: this cluster is off most of the day by
+  design, and a UI that hangs on a dead endpoint reads as broken software
+  rather than a stopped machine.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hecate — ask</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2c313b;
+    --text: #e6e8ec; --muted: #9aa3b2; --accent: #7aa2f7;
+    --high: #7ee787; --medium: #e3b341; --low: #f0883e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; justify-content: center; padding: 32px 16px;
+  }
+  main { width: 100%; max-width: 780px; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  form { display: flex; gap: 8px; margin-bottom: 20px; }
+  input {
+    flex: 1; padding: 11px 14px; border-radius: 8px; background: var(--panel);
+    border: 1px solid var(--line); color: var(--text); font-size: 15px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: 11px 18px; border-radius: 8px; border: 0; background: var(--accent);
+    color: #0d1117; font-weight: 600; font-size: 15px; cursor: pointer;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 18px; margin-bottom: 16px;
+  }
+  .q { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .answer { white-space: pre-wrap; margin-bottom: 14px; }
+  .meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+          font-size: 12px; color: var(--muted); }
+  .badge {
+    padding: 2px 9px; border-radius: 99px; font-weight: 600; font-size: 12px;
+    border: 1px solid currentColor;
+  }
+  .c-high { color: var(--high); }
+  .c-medium { color: var(--medium); }
+  .c-low { color: var(--low); }
+  /* - Low confidence changes the card itself, not just a word in the corner.
+       Rendering it identically and trusting someone to read the badge is how
+       a hedge becomes a fact. */
+  .card.low { border-color: var(--low); background: #241c15; }
+  .warn { color: var(--low); font-size: 13px; margin-bottom: 12px; font-weight: 600; }
+  .sources { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .sources h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+                color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .sources a { color: var(--accent); text-decoration: none; }
+  .sources a:hover { text-decoration: underline; }
+  .sources li { margin-bottom: 4px; }
+  ul { margin: 0; padding-left: 18px; }
+  .blocks { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .down { border-color: var(--low); }
+  .down h2 { margin: 0 0 8px; font-size: 15px; color: var(--low); }
+  code {
+    background: #0f1115; border: 1px solid var(--line); border-radius: 5px;
+    padding: 2px 6px; font-size: 12.5px; display: inline-block; margin: 2px 0;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hecate</h1>
+  <div class="sub">Ask about what is growing, what is being discussed, and what has gone quiet.</div>
+
+  <form id="form">
+    <input id="q" placeholder="What is growing fastest right now?" autocomplete="off" required maxlength="500">
+    <button id="go" type="submit">Ask</button>
+  </form>
+
+  <div id="out"></div>
+</main>
+
+<script>
+// - Served from the API, use the same origin. Opened off disk, there is no
+//   origin to speak of, so fall back to the port the service listens on.
+const API = location.protocol === "file:" ? "http://127.0.0.1:8001" : "";
+
+const out = document.getElementById("form");
+const results = document.getElementById("out");
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;   // textContent, never innerHTML
+  return n;
+}
+
+function renderDown(detail) {
+  const card = el("div", "card down");
+  card.append(el("h2", null, "The service is not running"));
+  card.append(el("div", null, detail));
+  const how = el("div");
+  how.style.marginTop = "10px";
+  how.append(el("div", null, "This cluster is only up when someone starts it. To start it:"));
+  for (const line of [
+    "ops\\windowed-run.ps1 -StartOnly",
+    "kubectl port-forward svc/hecate-rag 8001:8001 -n hecate",
+  ]) how.append(el("code", null, line), document.createElement("br"));
+  card.append(how);
+  results.prepend(card);
+}
+
+function renderAnswer(question, data) {
+  const low = data.confidence === "low";
+  const card = el("div", "card" + (low ? " low" : ""));
+  card.append(el("div", "q", question));
+
+  if (low) {
+    card.append(el("div", "warn",
+      "Low confidence — the data may not really cover this. Check the sources before relying on it."));
+  }
+
+  card.append(el("div", "answer", data.answer));
+
+  const meta = el("div", "meta");
+  const badge = el("span", "badge c-" + data.confidence, data.confidence + " confidence");
+  meta.append(badge, el("span", null, data.latency_ms + " ms"));
+  card.append(meta);
+
+  // - Always rendered, including when empty. "Sources: none" is information;
+  //   an absent section reads as though nobody thought about it.
+  const src = el("div", "sources");
+  src.append(el("h3", null, "Sources"));
+  const repos = (data.sources && data.sources.repositories) || [];
+  if (repos.length) {
+    const ul = el("ul");
+    for (const r of repos) {
+      const li = el("li");
+      if (r.url) {
+        const a = el("a", null, r.name + "  (" + r.source + ")");
+        a.href = r.url;
+        a.target = "_blank";
+        a.rel = "noreferrer noopener";
+        li.append(a);
+      } else {
+        li.append(el("span", null, r.name + "  (" + r.source + ")"));
+      }
+      ul.append(li);
+    }
+    src.append(ul);
+  } else {
+    src.append(el("div", "blocks", "No specific repository was cited."));
+  }
+
+  const blocks = (data.sources && data.sources.blocks) || [];
+  if (blocks.length) src.append(el("div", "blocks", "Built from: " + blocks.join(", ")));
+  card.append(src);
+
+  results.prepend(card);
+}
+
+out.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.getElementById("q");
+  const button = document.getElementById("go");
+  const question = input.value.trim();
+  if (!question) return;
+
+  button.disabled = true;
+  button.textContent = "Asking…";
+
+  // - A hard ceiling, so a wedged endpoint fails visibly instead of spinning
+  //   forever. Comfortably above the five second target the service aims for.
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 30000);
+
+  try {
+    const response = await fetch(API + "/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+      signal: stop.signal,
+    });
+
+    let body = {};
+    try { body = await response.json(); } catch (_) { /* non-JSON error page */ }
+
+    if (response.status === 503) {
+      renderDown(body.detail || "The service is switched off (RAG_ENABLED=0).");
+    } else if (response.status === 429) {
+      const card = el("div", "card down");
+      card.append(el("h2", null, "Too many questions"));
+      card.append(el("div", null, body.detail || "Rate limited. Try again shortly."));
+      results.prepend(card);
+    } else if (!response.ok) {
+      const card = el("div", "card down");
+      card.append(el("h2", null, "That did not work"));
+      // - The real reason, not a shrug. The service returns one deliberately.
+      card.append(el("div", null, body.detail || ("HTTP " + response.status)));
+      results.prepend(card);
+    } else {
+      renderAnswer(question, body);
+      input.value = "";
+    }
+  } catch (error) {
+    // - fetch only rejects when the request never completed: nothing
+    //   listening, DNS gone, or our own timeout. All of them mean the same
+    //   thing to whoever is looking at this.
+    renderDown(error.name === "AbortError"
+      ? "It did not answer within 30 seconds."
+      : "Nothing is listening on " + (API || location.origin) + ".");
+  } finally {
+    clearTimeout(timer);
+    button.disabled = false;
+    button.textContent = "Ask";
+  }
+});
+</script>
+</body>
+</html>

@@ -15,9 +15,11 @@ import sys
 import time
 from collections import deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from pipeline.config import Config
@@ -40,6 +42,11 @@ RATE_LIMIT_REQUESTS = 30
 RATE_LIMIT_WINDOW_SECONDS = 60
 
 MAX_QUESTION_LENGTH = 500
+
+# - The UI ships with the service rather than beside it. One file, no build
+#   step, and serving it from here means same-origin requests and nothing extra
+#   to start.
+UI_PATH = Path(__file__).parent / "static" / "index.html"
 
 
 class Question(BaseModel):
@@ -140,6 +147,16 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
             log.warning("rate limited", extra={"context": {"client": key}})
             raise HTTPException(status_code=429, detail="too many requests, try again shortly")
 
+    @app.get("/", response_class=HTMLResponse)
+    def ui() -> str:
+        try:
+            return UI_PATH.read_text(encoding="utf-8")
+        except OSError as exc:
+            # - Says which file, rather than 404ing as though there were no UI
+            #   by design.
+            log.error("ui missing", extra={"context": {"path": str(UI_PATH), "error": str(exc)}})
+            raise HTTPException(status_code=500, detail=f"UI not found at {UI_PATH}") from exc
+
     @app.get("/health")
     def health() -> dict:
         # - Reports the switch rather than hiding it. A service answering 503s
@@ -167,6 +184,26 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
                 status_code=500, detail=f"{type(exc).__name__}: {exc}"
             ) from exc
 
+        # - Cited ids turned into something clickable. Done here rather than in
+        #   the chain because it is presentation: the model cites ids, and what
+        #   a person needs is a link. A lookup failure costs the links, not the
+        #   answer - the ids are still in the response either way.
+        sources = dict(answer["sources"])
+        try:
+            sources["repositories"] = app.state.retriever.links_for(
+                sources.get("repository_ids", [])
+            )
+        except HecateError as exc:
+            log.warning("could not resolve sources", extra={"context": {"error": str(exc)}})
+            sources["repositories"] = []
+
+        # - After the lookup above, not before it. That is a database round
+        #   trip the caller waits through, and a latency figure that stops
+        #   measuring partway is the same kind of number this project keeps
+        #   throwing out: technically computed, quietly about something else.
+        #
+        #   The server-side number also replaces the chain's, which times only
+        #   its own work.
         latency_ms = int((time.perf_counter() - started) * 1000)
         if latency_ms > LATENCY_TARGET_MS:
             log.warning(
@@ -174,9 +211,7 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
                 extra={"context": {"latency_ms": latency_ms, "target_ms": LATENCY_TARGET_MS}},
             )
 
-        # - The server-side number replaces the chain's. They measure different
-        #   things and only one of them is what the caller waited.
-        return {**answer, "latency_ms": latency_ms}
+        return {**answer, "sources": sources, "latency_ms": latency_ms}
 
     @app.get("/trending")
     def trending(limit: int = 10) -> dict:

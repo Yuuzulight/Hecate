@@ -397,6 +397,30 @@ class WarehouseRetriever:
             if repository_id in by_id
         ]
 
+    def links_for(self, repository_ids: list[str]) -> list[dict]:
+        """Name and URL for cited ids, so an answer's sources can be followed.
+
+        The chain cites ids because they are unambiguous - names collide across
+        sources - but an id is not something a person can click. This is the
+        translation, and it is a read rather than anything the model touches:
+        a citation that survives to here has already been checked against the
+        context it came from.
+        """
+        if not repository_ids:
+            return []
+        rows = self._rows(
+            """
+            SELECT id, name, source, url
+            FROM raw_repositories
+            WHERE id = ANY(%s)
+            """,
+            (repository_ids,),
+        )
+        by_id = {row["id"]: row for row in rows}
+        # - Cited order, and silently short if a row has since been deleted.
+        #   A link to something that is gone is worse than one link fewer.
+        return [by_id[rid] for rid in repository_ids if rid in by_id]
+
     # ---- reading the evaluation history
 
     def recent_evaluations(self, limit: int = 50) -> list[dict]:

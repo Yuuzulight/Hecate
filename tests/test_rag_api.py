@@ -45,10 +45,20 @@ class StubChain:
 
 
 class StubRetriever:
-    def __init__(self, evaluations=None, fail_evaluations=False):
+    def __init__(self, evaluations=None, fail_evaluations=False, fail_links=False):
         self.evaluations = evaluations if evaluations is not None else []
         self.fail_evaluations = fail_evaluations
+        self.fail_links = fail_links
         self.conn = object()
+
+    def links_for(self, repository_ids):
+        if self.fail_links:
+            raise LoadError("connection closed")
+        known = {
+            "github_1": {"id": "github_1", "name": "skills", "source": "github",
+                         "url": "https://github.com/anthropics/skills"},
+        }
+        return [known[r] for r in repository_ids if r in known]
 
     def fastest_growing(self, limit=10):
         return [{"id": "github_1", "name": "skills", "stars_gained_1d": 207}][:limit]
@@ -335,6 +345,73 @@ def test_no_evaluations_yet_is_a_state_not_an_error(config, caplog):
     # - Logged rather than swallowed, so a table that is missing for a bad
     #   reason is still visible.
     assert "no evaluation history" in [record.message for record in caplog.records]
+
+
+# ---- the UI, and the links it needs
+
+
+def test_cited_ids_come_back_as_something_clickable(config):
+    # - The chain cites ids because names collide across sources. An id is not
+    #   a thing a person can click, so the API resolves them here.
+    client, _, _ = make_client(config)
+    sources = client.post("/ask", json={"question": "what is growing?"}).json()["sources"]
+
+    assert sources["repository_ids"] == ["github_1"]
+    assert sources["repositories"] == [
+        {"id": "github_1", "name": "skills", "source": "github",
+         "url": "https://github.com/anthropics/skills"},
+    ]
+
+
+def test_a_failed_lookup_costs_the_links_not_the_answer(config, caplog):
+    client, _, _ = make_client(config, retriever=StubRetriever(fail_links=True))
+
+    with caplog.at_level("WARNING"):
+        body = client.post("/ask", json={"question": "what is growing?"}).json()
+
+    assert body["answer"], "the answer still has to arrive"
+    assert body["sources"]["repository_ids"] == ["github_1"]
+    assert body["sources"]["repositories"] == []
+    assert "could not resolve sources" in [record.message for record in caplog.records]
+
+
+def test_the_ui_is_served_by_the_service(config):
+    client, _, _ = make_client(config)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Hecate" in response.text
+
+
+def test_the_ui_renders_sources_rather_than_hiding_them(config):
+    # - A grounded answer whose grounding is hidden looks exactly like an
+    #   ungrounded one, so there is no disclosure triangle to click.
+    page = make_client(config)[0].get("/").text
+    assert "<details" not in page
+    assert "Sources" in page
+
+
+def test_the_ui_explains_a_stopped_service(config):
+    page = make_client(config)[0].get("/").text
+    assert "The service is not running" in page
+    assert "windowed-run.ps1 -StartOnly" in page
+
+
+def test_the_ui_marks_low_confidence_distinctly(config):
+    page = make_client(config)[0].get("/").text
+    assert ".card.low" in page
+    assert "Low confidence" in page
+
+
+def test_the_ui_does_not_build_markup_from_response_text(config):
+    # - Answers and descriptions come from a model reading third-party text.
+    #   textContent throughout; one innerHTML would make that an injection.
+    #
+    #   Matching the bare word caught the comment saying not to use it, which
+    #   is a test failing on a mention of the thing rather than the thing.
+    page = make_client(config)[0].get("/").text
+    for unsafe in (".innerHTML", ".outerHTML", "insertAdjacentHTML", "document.write"):
+        assert unsafe not in page, f"{unsafe} builds markup from untrusted text"
 
 
 # ---- ports
