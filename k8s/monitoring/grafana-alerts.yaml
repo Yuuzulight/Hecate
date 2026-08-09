@@ -141,3 +141,85 @@ data:
                   conditions:
                     - evaluator: { type: lt, params: [1] }
                   refId: threshold
+
+          # - Phase 2. Both of these read the evaluation table, which is why
+          #   they are here rather than in the Prometheus rules: the scores live
+          #   in Postgres, and Prometheus does not speak to Postgres.
+          - uid: hecate-hallucination
+            title: Answers are being invented
+            condition: threshold
+            annotations:
+              summary: >-
+                More than 2% of evaluated answers failed faithfulness. The
+                service is up and answering; what it is saying is the problem,
+                and a fluent wrong answer reads exactly like a correct one.
+            # - Sustained, because the question set is small enough that one bad
+            #   answer in a twelve-question run is over 8%. A single run
+            #   tripping this is noise; two hours of it is a change.
+            for: 2h
+            labels:
+              severity: critical
+            data:
+              - refId: query
+                relativeTimeRange: { from: 86400, to: 0 }
+                datasourceUid: postgres
+                model:
+                  format: table
+                  rawQuery: true
+                  # - Unscored answers are excluded from both halves rather than
+                  #   counted as good. A judge that could not be reached is an
+                  #   outage, not a clean bill of health.
+                  rawSql: >-
+                    SELECT round(100.0 * count(*) FILTER (WHERE hallucination)
+                                 / NULLIF(count(*) FILTER (
+                                     WHERE hallucination IS NOT NULL), 0), 1)
+                           AS rate
+                    FROM rag_evaluations
+                    WHERE evaluated_at > now() - interval '24 hours'
+                  refId: query
+              - refId: threshold
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: query
+                  conditions:
+                    - evaluator: { type: gt, params: [2] }
+                  refId: threshold
+
+          - uid: hecate-faithfulness
+            title: Faithfulness is falling
+            condition: threshold
+            annotations:
+              summary: >-
+                Mean faithfulness has dropped below 0.8. This catches a slide the
+                hallucination rate would not: answers can get steadily less
+                grounded for a long time before any single one crosses the
+                threshold that labels it invented.
+            for: 2h
+            labels:
+              severity: warning
+            data:
+              - refId: query
+                relativeTimeRange: { from: 86400, to: 0 }
+                datasourceUid: postgres
+                model:
+                  format: table
+                  rawQuery: true
+                  # - NULLs are skipped by avg() rather than counted as zero,
+                  #   which is the whole reason that column is nullable. A run
+                  #   where the judge was unreachable would otherwise read as a
+                  #   collapse in quality.
+                  rawSql: >-
+                    SELECT round(avg(faithfulness)::numeric, 3) AS mean
+                    FROM rag_evaluations
+                    WHERE evaluated_at > now() - interval '24 hours'
+                      AND faithfulness IS NOT NULL
+                  refId: query
+              - refId: threshold
+                datasourceUid: __expr__
+                model:
+                  type: threshold
+                  expression: query
+                  conditions:
+                    - evaluator: { type: lt, params: [0.8] }
+                  refId: threshold

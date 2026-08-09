@@ -56,3 +56,34 @@ last_extraction_age = Gauge(
     "Seconds since this source was last extracted successfully",
     ["source"],
 )
+
+# - Phase 2. Every other component here fails by producing wrong data; this one
+#   fails by producing a bill, so the counters come before the panels. A panel
+#   querying a metric nobody emits draws an empty graph, and an empty graph
+#   looks exactly like no spend.
+
+rag_questions = Counter(
+    "hecate_rag_questions_total",
+    "Questions asked of the chain, by outcome",
+    ["outcome"],
+)
+
+rag_tokens = Counter(
+    "hecate_rag_tokens_total",
+    "Tokens billed by the model, by direction",
+    ["kind"],
+)
+
+# - Counted in whole dollars would be zero forever, so this is a float counter
+#   of actual dollars and the panel does the rounding. Approximate by nature:
+#   it is our own arithmetic over published per-token prices, not the invoice.
+rag_cost = Counter(
+    "hecate_rag_cost_usd_total",
+    "Approximate spend, priced from the token counts the API reports",
+)
+
+rag_context_cache = Counter(
+    "hecate_rag_context_cache_total",
+    "Context cache lookups, by result",
+    ["result"],
+)

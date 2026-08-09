@@ -17,9 +17,10 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from pipeline.config import Config
@@ -156,6 +157,13 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
             #   by design.
             log.error("ui missing", extra={"context": {"path": str(UI_PATH), "error": str(exc)}})
             raise HTTPException(status_code=500, detail=f"UI not found at {UI_PATH}") from exc
+
+    @app.get("/metrics")
+    def prometheus_metrics() -> Response:
+        # - Here rather than on a second port. The exporter on 8000 reads the
+        #   warehouse and knows nothing about questions; these counters live in
+        #   this process and die with it, so they have to be served from it.
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/health")
     def health() -> dict:

@@ -69,3 +69,26 @@ data:
               description: >-
                 The gauge has disappeared rather than dropped, which usually
                 means the exporter cannot reach the database.
+
+          # - Phase 2, and the only rule here about money rather than data.
+          #   Every other component fails by producing something wrong; this one
+          #   fails by producing a bill, and a caller retrying in a loop would
+          #   look like a perfectly healthy service until the invoice arrived.
+          #
+          #   A dollar a day against an expected few cents: high enough that
+          #   ordinary use never reaches it, low enough to catch a loop on the
+          #   day rather than at the end of the month. `for` is deliberately
+          #   short - by the time this fires the money is already spent, and
+          #   waiting to confirm the trend only spends more.
+          - alert: RagSpendHigh
+            expr: increase(hecate_rag_cost_usd_total[24h]) > 1
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Answering questions has cost over a dollar in 24h"
+              description: >-
+                Expected spend is a few cents a day, so either something is
+                asking far more questions than a person would or a caller is
+                retrying in a loop. Setting RAG_ENABLED=0 stops it without a
+                rebuild.

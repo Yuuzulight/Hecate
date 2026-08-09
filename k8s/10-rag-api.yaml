@@ -42,6 +42,12 @@ spec:
       labels:
         # - What the NetworkPolicy matches on for database access.
         app: hecate-rag
+      annotations:
+        # - Its own counters, on its own port. The exporter on 8000 reads the
+        #   warehouse; questions, tokens and spend only exist in this process.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: /metrics
     spec:
       containers:
         - name: rag

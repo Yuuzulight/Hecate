@@ -414,6 +414,32 @@ def test_the_ui_does_not_build_markup_from_response_text(config):
         assert unsafe not in page, f"{unsafe} builds markup from untrusted text"
 
 
+# ---- metrics, which have to exist before any panel queries them
+
+
+def test_the_service_exposes_its_own_counters(config):
+    client, _, _ = make_client(config)
+    body = client.get("/metrics").text
+    for metric in (
+        "hecate_rag_questions_total",
+        "hecate_rag_tokens_total",
+        "hecate_rag_cost_usd_total",
+        "hecate_rag_context_cache_total",
+    ):
+        assert metric in body, f"{metric} is on a dashboard panel but nobody emits it"
+
+
+def test_the_endpoint_reflects_counter_activity(config):
+    # - Incremented directly rather than by asking a question: the counter
+    #   lives in the chain, and the chain here is a stub. Asking through the
+    #   stub and asserting the counter moved would be testing the stub.
+    from pipeline import metrics
+
+    metrics.rag_questions.labels(outcome="high").inc()
+    body = make_client(config)[0].get("/metrics").text
+    assert 'hecate_rag_questions_total{outcome="high"}' in body
+
+
 # ---- ports
 
 

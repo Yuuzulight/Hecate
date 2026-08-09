@@ -244,6 +244,18 @@ def test_an_empty_context_cites_nothing_rather_than_failing():
 # would otherwise only appear on the first live question.
 
 
+def bound_model(structured):
+    """The bound ChatAnthropic inside whatever LangChain wrapped it in.
+
+    include_raw puts the model behind a RunnableParallel, so reaching it is a
+    step deeper than it was. Kept in one place so a LangChain version bump
+    breaks one helper rather than four tests.
+    """
+    first = structured.first
+    steps = getattr(first, "steps__", None) or getattr(first, "steps", None)
+    return steps["raw"] if steps else first
+
+
 def test_the_model_does_not_force_a_tool_call():
     # - The forced-tool path is rejected by the API whenever thinking is on,
     #   and thinking is on by default on this model. langchain guards against
@@ -251,14 +263,13 @@ def test_the_model_does_not_force_a_tool_call():
     #   it is not here - so the guard misses and the request would 400.
     from pipeline.rag.chain import build_model
 
-    bound = build_model().first.kwargs
-    assert "tool_choice" not in bound
+    assert "tool_choice" not in bound_model(build_model()).kwargs
 
 
 def test_the_answer_schema_reaches_the_request():
     from pipeline.rag.chain import build_model
 
-    bound = build_model().first.kwargs
+    bound = bound_model(build_model()).kwargs
     schema = bound["output_config"]["format"]["schema"]
     assert set(schema["properties"]) == {"answer", "confidence", "sources"}
 
@@ -266,23 +277,108 @@ def test_the_answer_schema_reaches_the_request():
 def test_effort_survives_the_structured_output_binding():
     # - Both settings write to output_config. If the bind replaced rather than
     #   merged, effort would vanish silently and only show up on the bill.
-    from pipeline.rag.chain import EFFORT, build_model
+    from pipeline.rag.chain import EFFORT, build_chat_model, build_model
 
-    model = build_model()
-    assert model.first.kwargs["output_config"]["format"]
-    assert model.first.bound.output_config == {"effort": EFFORT}
+    assert bound_model(build_model()).kwargs["output_config"]["format"]
+    assert build_chat_model().output_config == {"effort": EFFORT}
 
 
 def test_no_sampling_parameters_are_sent():
     # - temperature, top_p and top_k are removed on this model and any of them
     #   is a 400. The scope asked for temperature 0.2; the prompt carries that
     #   intent instead.
-    from pipeline.rag.chain import build_model
+    from pipeline.rag.chain import build_chat_model
 
-    model = build_model().first.bound
+    model = build_chat_model()
     assert model.temperature is None
     assert model.top_p is None
     assert model.top_k is None
+
+
+def test_the_raw_message_comes_back_so_spend_can_be_counted():
+    # - Without include_raw the parsed object arrives alone and the token
+    #   counts are gone, which would leave the spend panel drawing an empty
+    #   graph that looks exactly like no spend.
+    from pipeline.rag.chain import build_model
+
+    assert isinstance(build_model().first.steps__, dict)
+    assert "raw" in build_model().first.steps__
+
+
+# ---- counting what it cost
+#
+# The counters are the reason the spend panel has anything to draw. A panel
+# querying a metric nobody emits renders an empty graph, and an empty graph
+# reads as no spend rather than no measurement.
+
+
+class FakeMessage:
+    def __init__(self, usage):
+        self.usage_metadata = usage
+
+
+def counter_value(metric, **labels):
+    m = metric.labels(**labels) if labels else metric
+    return m._value.get()
+
+
+def test_tokens_and_cost_are_counted_from_the_raw_message():
+    from pipeline import metrics
+    from pipeline.rag.chain import PRICE_PER_MTOK_INPUT, PRICE_PER_MTOK_OUTPUT
+
+    chain, _ = chain_returning()
+    before_in = counter_value(metrics.rag_tokens, kind="input")
+    before_cost = counter_value(metrics.rag_cost)
+
+    answer = GroundedAnswer(answer="a", confidence="high", sources=Sources())
+    chain._unwrap({
+        "raw": FakeMessage({"input_tokens": 12000, "output_tokens": 400}),
+        "parsed": answer,
+        "parsing_error": None,
+    })
+
+    assert counter_value(metrics.rag_tokens, kind="input") - before_in == 12000
+    expected = 12000 / 1e6 * PRICE_PER_MTOK_INPUT + 400 / 1e6 * PRICE_PER_MTOK_OUTPUT
+    assert counter_value(metrics.rag_cost) - before_cost == pytest.approx(expected)
+
+
+def test_an_unreadable_answer_is_loud_rather_than_empty():
+    # - Returning an empty answer here would be indistinguishable from the data
+    #   having nothing to say, which is the one confusion this whole module is
+    #   built to prevent.
+    from pipeline.exceptions import HecateError
+
+    chain, _ = chain_returning()
+    with pytest.raises(HecateError):
+        chain._unwrap({"raw": FakeMessage({}), "parsed": None,
+                       "parsing_error": ValueError("bad json")})
+
+
+def test_a_stub_that_returns_the_answer_directly_still_works():
+    # - The tests above hand back a GroundedAnswer rather than LangChain's
+    #   envelope. Requiring them to imitate it would make them tests of the
+    #   envelope.
+    chain, _ = chain_returning()
+    answer = GroundedAnswer(answer="a", confidence="high", sources=Sources())
+    assert chain._unwrap(answer) is answer
+
+
+def test_missing_usage_is_not_counted_as_zero_cost():
+    from pipeline import metrics
+
+    chain, _ = chain_returning()
+    before = counter_value(metrics.rag_cost)
+    chain._record_spend(FakeMessage(None))
+    assert counter_value(metrics.rag_cost) == before
+
+
+def test_questions_are_counted_by_confidence():
+    from pipeline import metrics
+
+    chain, _ = chain_returning(confidence="low")
+    before = counter_value(metrics.rag_questions, outcome="low")
+    chain.answer("something marginal")
+    assert counter_value(metrics.rag_questions, outcome="low") - before == 1
 
 
 # ---- the schema itself

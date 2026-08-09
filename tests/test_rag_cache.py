@@ -99,6 +99,28 @@ def test_hits_and_misses_are_logged(cache, caplog):
     assert "cache hit" in messages
 
 
+def test_a_hit_a_miss_and_an_outage_are_counted_apart(cache):
+    # - A miss and an unreachable Redis both end in a database query, but one
+    #   is the cache working and the other is the cache being gone. A hit rate
+    #   that folds outages into misses is a hit rate about nothing.
+    from pipeline import metrics
+
+    def value(result):
+        return metrics.rag_context_cache.labels(result=result)._value.get()
+
+    before = {r: value(r) for r in ("hit", "miss", "unavailable")}
+
+    cache.get("absent")
+    cache.set("present", {"a": 1})
+    cache.get("present")
+    cache.client = FakeRedis(fail=True)
+    cache.get("present")
+
+    assert value("miss") - before["miss"] == 1
+    assert value("hit") - before["hit"] == 1
+    assert value("unavailable") - before["unavailable"] == 1
+
+
 def test_what_is_stored_is_json(cache):
     cache.set("k", {"coverage": {"history_to": "2026-08-09"}})
     # - Dates are cast to text in the SQL so a cached context and a fresh one

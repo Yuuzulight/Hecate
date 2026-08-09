@@ -21,6 +21,8 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from pipeline import metrics
+from pipeline.exceptions import HecateError
 from pipeline.logger import get_logger
 
 # - The current Opus. Named here rather than in Config because changing it is a
@@ -46,6 +48,14 @@ EFFORT = "medium"
 #   counts against the same budget, so a tight ceiling truncates the answer
 #   rather than the reasoning.
 MAX_TOKENS = 16000
+
+# - Published per-million-token prices for this model, used to turn the token
+#   counts the API reports into a number somebody can look at. Approximate by
+#   construction: it is our arithmetic, not the invoice, and it is wrong the
+#   day pricing changes. Better than the alternative, which was a cost panel
+#   with nothing behind it.
+PRICE_PER_MTOK_INPUT = 5.00
+PRICE_PER_MTOK_OUTPUT = 25.00
 
 SYSTEM_PROMPT = """You answer questions about a repository-intelligence dataset.
 
@@ -111,6 +121,20 @@ class GroundedAnswer(BaseModel):
     sources: Sources
 
 
+def build_chat_model() -> ChatAnthropic:
+    """The model itself, before anything is bound to it.
+
+    Split out so the wiring can be asserted directly. Once structured output
+    is attached the model is buried inside a runnable graph, and a test that
+    has to walk that graph is testing LangChain rather than this.
+    """
+    return ChatAnthropic(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        output_config={"effort": EFFORT},
+    )
+
+
 def build_model() -> object:
     """The model, already constrained to the answer schema.
 
@@ -124,12 +148,13 @@ def build_model() -> object:
     `json_schema` binds `output_config.format` instead and forces nothing. It
     merges with the effort set below rather than replacing it: the payload
     builder combines the constructor's output_config with the bound one.
+
+    `include_raw` because the parsed object alone has no token counts on it,
+    and without those the spend panel has nothing to draw.
     """
-    return ChatAnthropic(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        output_config={"effort": EFFORT},
-    ).with_structured_output(GroundedAnswer, method="json_schema")
+    return build_chat_model().with_structured_output(
+        GroundedAnswer, method="json_schema", include_raw=True
+    )
 
 
 def context_ids(context: dict) -> set[str]:
@@ -169,7 +194,7 @@ class AnswerChain:
         started = time.perf_counter()
         context = self.retriever.context_for(question)
 
-        result = self.model.invoke(
+        raw = self.model.invoke(
             [
                 SystemMessage(content=SYSTEM_PROMPT),
                 HumanMessage(
@@ -180,9 +205,61 @@ class AnswerChain:
                 ),
             ]
         )
+        result = self._unwrap(raw)
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         return self._grounded(result, context, latency_ms), context
+
+    def _unwrap(self, raw) -> GroundedAnswer:
+        """Pull the answer out, and count what it cost on the way past.
+
+        `include_raw` makes the model hand back the message alongside the
+        parsed object, which is the only place the token counts live. A stub
+        that returns a GroundedAnswer directly still works - the tests use
+        one, and requiring them to imitate LangChain's envelope would make
+        them tests of the envelope.
+        """
+        if not isinstance(raw, dict):
+            return raw
+
+        message = raw.get("raw")
+        parsed = raw.get("parsed")
+        self._record_spend(message)
+
+        if parsed is None:
+            error = raw.get("parsing_error")
+            metrics.rag_questions.labels(outcome="unparsed").inc()
+            # - Loud. A model that answered in a shape we cannot read is not an
+            #   empty answer, and returning one would be indistinguishable from
+            #   the data having nothing to say.
+            raise HecateError(f"the model's answer did not fit the schema: {error}")
+        return parsed
+
+    def _record_spend(self, message) -> None:
+        """Tokens and approximate cost, per call.
+
+        Never fatal: an answer that arrived is worth returning even if the
+        accounting for it did not.
+        """
+        usage = getattr(message, "usage_metadata", None) or {}
+        sent = usage.get("input_tokens") or 0
+        received = usage.get("output_tokens") or 0
+        if not (sent or received):
+            return
+
+        cost = (sent / 1_000_000 * PRICE_PER_MTOK_INPUT
+                + received / 1_000_000 * PRICE_PER_MTOK_OUTPUT)
+        metrics.rag_tokens.labels(kind="input").inc(sent)
+        metrics.rag_tokens.labels(kind="output").inc(received)
+        metrics.rag_cost.inc(cost)
+        self.log.info(
+            "spend",
+            extra={"context": {
+                "input_tokens": sent,
+                "output_tokens": received,
+                "approx_cost_usd": round(cost, 6),
+            }},
+        )
 
     def _grounded(self, result: GroundedAnswer, context: dict, latency_ms: int) -> dict:
         """Drop citations the context cannot support, and never drop the field.
@@ -208,6 +285,11 @@ class AnswerChain:
                 "citations not in context",
                 extra={"context": {"dropped": invented, "kept": len(cited)}},
             )
+
+        # - Labelled by confidence rather than counted flat. "How many
+        #   questions" is barely a question; "how many the model would not
+        #   stand behind" is one worth a panel.
+        metrics.rag_questions.labels(outcome=result.confidence).inc()
 
         self.log.info(
             "answered",

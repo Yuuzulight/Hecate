@@ -12,6 +12,7 @@ import json
 
 import redis
 
+from pipeline import metrics
 from pipeline.logger import get_logger
 
 # - Short enough that a key scheme mistake expires on its own, long enough to
@@ -61,11 +62,18 @@ class ContextCache:
             raw = self.client.get(key)
         except redis.RedisError as exc:
             self.log.warning("cache unavailable", extra={"context": {"error": str(exc)}})
+            # - Counted apart from a miss. Both end in a database query, but
+            #   one is the cache working and the other is the cache being gone,
+            #   and a hit rate that quietly includes outages is a hit rate
+            #   about nothing.
+            metrics.rag_context_cache.labels(result="unavailable").inc()
             return None
         if raw is None:
             self.log.info("cache miss", extra={"context": {"key": key}})
+            metrics.rag_context_cache.labels(result="miss").inc()
             return None
         self.log.info("cache hit", extra={"context": {"key": key}})
+        metrics.rag_context_cache.labels(result="hit").inc()
         return json.loads(raw)
 
     def set(self, key: str, value: dict) -> None:
