@@ -181,7 +181,7 @@ The cluster is off most of the day. That was decided a day before the service wa
 
 Which makes the uptime figure worth stating carefully: **99.5% applies to while it is running**, not to wall-clock. Measured against the clock the number would be far lower and would be describing a switched-off machine rather than a service.
 
-The under-five-second target is the query, not the start. Starting costs whatever Docker Desktop costs on the day — the daily window, which starts Docker and then does real work, finishes in a bit over two minutes end to end, so the start itself is well inside that. The service adds almost nothing to it.
+The under-five-second target is the query, not the start. Starting is dominated by Docker Desktop: measured cold, 36 seconds from launching it to a database answering a query — 20 of those before the daemon reported itself up, and the rest waiting for the API server and Postgres. The service itself adds almost nothing on top.
 
 A permanent cluster was considered and rejected: it reverses a one-day-old decision for something asked a handful of times a week. Hosting it somewhere else is the right answer only if the goal becomes a URL other people can open, which is a different objective and a paid one.
 
