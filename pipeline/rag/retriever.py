@@ -11,6 +11,8 @@ fitting in a prompt, and that failure arrives quietly, as truncation.
 """
 
 import re
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 import psycopg2
@@ -20,6 +22,7 @@ from pipeline.config import Config
 from pipeline.exceptions import LoadError
 from pipeline.logger import get_logger
 from pipeline.matching import name_candidates
+from pipeline.rag.cache import ContextCache, context_key
 
 # - Enough rows to reason over, few enough to stay well inside a prompt. The
 #   growth tables have a long tail of single-star movements below this, which
@@ -31,13 +34,25 @@ DEFAULT_LIMIT = 10
 MAX_NAMED_REPOSITORIES = 5
 
 
+def _plain(value):
+    """Postgres types the prompt and the cache can both handle."""
+    if isinstance(value, Decimal):
+        # - Scores and counts, not money. Nothing here needs exact decimals,
+        #   and a float reads better in a prompt than "15.00".
+        return float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
 class WarehouseRetriever:
     """Reads the marts and returns bounded, already-summarised context."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, cache: ContextCache | None = None) -> None:
         self.config = config
         self.log = get_logger("rag.retriever")
         self.conn = None
+        self.cache = cache if cache is not None else ContextCache(config.redis_url)
         self._languages: list[str] | None = None
         self._names: dict[str, str] | None = None
 
@@ -59,11 +74,19 @@ class WarehouseRetriever:
             self.conn = None
 
     def _rows(self, sql: str, params: tuple = ()) -> list[dict]:
+        """Query, and hand back something that survives a JSON round trip.
+
+        Postgres returns Decimal for numeric columns and date objects for
+        dates, neither of which json.dumps will take. Converting here rather
+        than casting in each query means a cached context and a freshly built
+        one are the same shape - otherwise the two differ by type for the same
+        question, which surfaces much later and somewhere else.
+        """
         if self.conn is None:
             raise LoadError("retriever is not connected")
         with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
-            return [dict(row) for row in cur.fetchall()]
+            return [{k: _plain(v) for k, v in row.items()} for row in cur.fetchall()]
 
     # ---- the shape of the data, which the model needs before the data itself
 
@@ -89,6 +112,11 @@ class WarehouseRetriever:
             """
         )
         return rows[0] if rows else {}
+
+    def data_version(self) -> str:
+        """What the answer would be built from, as a cache key component."""
+        rows = self._rows("SELECT max(captured_on)::text AS version FROM repository_snapshots")
+        return (rows[0]["version"] if rows else None) or "empty"
 
     def sources(self) -> list[dict]:
         """Per-source coverage, so the model cannot compare across a gap.
@@ -314,6 +342,11 @@ class WarehouseRetriever:
         attention together, and the difference between them is often the
         interesting part of the answer.
         """
+        key = context_key(question, self.data_version())
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached
+
         context: dict[str, Any] = {
             "coverage": self.coverage(),
             "sources": self.sources(),
@@ -341,4 +374,5 @@ class WarehouseRetriever:
                 "names": names[:MAX_NAMED_REPOSITORIES],
             }},
         )
+        self.cache.set(key, context)
         return context

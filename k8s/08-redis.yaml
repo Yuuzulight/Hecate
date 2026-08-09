@@ -1,0 +1,75 @@
+# Redis, as a cache and nothing else.
+#
+# A Deployment rather than a StatefulSet, and no volume. Everything in here is
+# derivable from PostgreSQL - context that was assembled from the marts, and
+# later the embeddings - so losing it costs a rebuild rather than data. Giving
+# it a PVC would buy the same recovery at the price of the RWO-volume deadlock
+# that stopped Prometheus ever restarting.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: hecate
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: hecate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          # - Bounded, and told what to do when it fills. Without maxmemory a
+          #   cache grows until the node reclaims the pod, which turns a cache
+          #   miss into an eviction of the thing doing the caching.
+          #   allkeys-lru because every key here is disposable; there is
+          #   nothing in Redis that must survive pressure.
+          args:
+            - redis-server
+            - --maxmemory
+            - 128mb
+            - --maxmemory-policy
+            - allkeys-lru
+            - --save
+            - ""
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 192Mi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 20

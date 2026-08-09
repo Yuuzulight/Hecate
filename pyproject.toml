@@ -10,6 +10,10 @@ dependencies = [
     "requests==2.34.2",
     "prometheus-client==0.26.0",
     "python-dotenv==1.2.2",
+    # - Small and pure Python, so it sits in the base set rather than behind an
+    #   extra like dbt. Nothing breaks without a Redis to talk to: the cache
+    #   degrades to a miss and the retriever answers from PostgreSQL.
+    "redis==8.1.0",
 ]
 
 [project.optional-dependencies]

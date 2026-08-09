@@ -71,6 +71,10 @@ class Config:
         self.batch_size = _int("BATCH_SIZE", 100, maximum=10_000)
         self.retry_attempts = _int("RETRY_ATTEMPTS", 3, maximum=10)
 
+        # - Empty means no cache, which is a working configuration rather than
+        #   a broken one: the retriever answers from PostgreSQL either way.
+        self.redis_url = _optional("REDIS_URL")
+
     def __repr__(self) -> str:
         # - Never let the password reach a log line or a traceback.
         return (

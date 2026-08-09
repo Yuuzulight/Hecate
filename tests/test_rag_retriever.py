@@ -10,6 +10,7 @@ import pytest
 
 from pipeline.config import Config
 from pipeline.exceptions import LoadError
+from pipeline.rag.cache import ContextCache
 from pipeline.rag.retriever import MAX_NAMED_REPOSITORIES, WarehouseRetriever
 
 
@@ -26,9 +27,11 @@ def retriever(config, monkeypatch):
     """A retriever whose every query returns a canned answer.
 
     Keyed on a fragment of the SQL so each block can be given its own rows
-    without caring what order they run in.
+    without caring what order they run in. The cache is disabled - its own
+    behaviour is covered in test_rag_cache.py, and leaving it on here would
+    mean the second assertion in a test read a cached first.
     """
-    r = WarehouseRetriever(config)
+    r = WarehouseRetriever(config, cache=ContextCache(url=""))
     # - Fragments have to be unique to one query. Several of these read the
     #   growth mart, so matching on the table name alone hands the profile
     #   query the fastest-growing rows and the test passes for the wrong
@@ -38,6 +41,7 @@ def retriever(config, monkeypatch):
             {"id": "github_1", "name": "vite", "source": "github", "stars": 82239},
             {"id": "npm_vite", "name": "vite", "source": "npm", "stars": 0},
         ],
+        "AS version": [{"version": "2026-08-09"}],
         "FROM raw_repositories)": [{"repositories": 2013, "snapshot_days": 2}],
         "dim_sources": [{"source": "github", "with_stars": 508}],
         "GROUP BY r.language": [{"language": "Python", "stars_gained_1d": 6081}],
