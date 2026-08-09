@@ -75,20 +75,29 @@ data:
           #   fails by producing a bill, and a caller retrying in a loop would
           #   look like a perfectly healthy service until the invoice arrived.
           #
-          #   A dollar a day against an expected few cents: high enough that
-          #   ordinary use never reaches it, low enough to catch a loop on the
-          #   day rather than at the end of the month. `for` is deliberately
-          #   short - by the time this fires the money is already spent, and
-          #   waiting to confirm the trend only spends more.
+          #   Three dollars a day. It started at one, against an expected few
+          #   cents of ordinary asking - and that was wrong, because a full
+          #   evaluation run costs about $1.24 on its own. Twelve questions,
+          #   each answered once and then judged twice, and each judgement
+          #   re-sends the whole retrieved context. A one-dollar ceiling would
+          #   have fired on the thing this project built to check itself.
+          #
+          #   Three still catches what this is for. The failure worth alerting
+          #   on is a caller retrying in a loop, and a loop clears three
+          #   dollars about as quickly as it clears one; what changed is that
+          #   legitimate use no longer trips it.
+          #
+          #   `for` is deliberately short - by the time this fires the money is
+          #   already spent, and waiting to confirm the trend only spends more.
           - alert: RagSpendHigh
-            expr: increase(hecate_rag_cost_usd_total[24h]) > 1
+            expr: increase(hecate_rag_cost_usd_total[24h]) > 3
             for: 10m
             labels:
               severity: critical
             annotations:
-              summary: "Answering questions has cost over a dollar in 24h"
+              summary: "Answering questions has cost over three dollars in 24h"
               description: >-
-                Expected spend is a few cents a day, so either something is
-                asking far more questions than a person would or a caller is
-                retrying in a loop. Setting RAG_ENABLED=0 stops it without a
-                rebuild.
+                That is more than an evaluation run and far more than a person
+                asking questions, so either something is asking far more often
+                than a person would or a caller is retrying in a loop. Setting
+                RAG_ENABLED=0 stops it without a rebuild.
