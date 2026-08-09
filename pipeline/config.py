@@ -82,6 +82,11 @@ class Config:
         #   finding.
         self.openai_api_key = _optional("OPENAI_API_KEY")
 
+        # - Needed by the chain and by the evaluation judge. Optional here for
+        #   the same reason as the others: importing the module, reading scores
+        #   back, and every test must all work without a key.
+        self.anthropic_api_key = _optional("ANTHROPIC_API_KEY")
+
     def __repr__(self) -> str:
         # - Never let the password reach a log line or a traceback.
         return (

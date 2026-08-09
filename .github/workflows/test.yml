@@ -63,10 +63,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # - The RAG extras are a separate file so they stay out of the
-          #   pipeline image, but the tests for the chain import LangChain, so
-          #   CI needs them even though the daily job never does.
-          pip install -r requirements-rag.txt
+          # - The RAG extras are separate files so they stay out of the
+          #   pipeline image, but the tests import LangChain and RAGAS, so CI
+          #   needs them even though the daily job never does. -eval includes
+          #   -rag, so this one line covers both.
+          pip install -r requirements-eval.txt
           pip install pytest pytest-cov
 
       - name: Test

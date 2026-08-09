@@ -30,6 +30,14 @@ rag = [
     "langchain-anthropic==1.5.4",
     "langchain-core==1.5.3",
 ]
+# - Split off again: RAGAS brings about forty packages with it, including
+#   OpenAI's client, and the service that answers questions has no use for the
+#   thing that grades them. The langchain-community pin is what makes RAGAS
+#   0.4.3 importable at all - see requirements-eval.txt.
+eval = [
+    "ragas==0.4.3",
+    "langchain-community==0.3.31",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,19 @@
+# Evaluation only. Separate from requirements-rag.txt because RAGAS drags in
+# roughly forty packages - datasets, pandas, pyarrow, scipy, scikit-network,
+# instructor, and OpenAI's client - none of which belong in the service that
+# answers questions. Scoring is an offline job; the service should not carry
+# the scorer.
+
+-r requirements-rag.txt
+
+ragas==0.4.3
+
+# - Not optional, and not a preference. RAGAS 0.4.3 declares langchain-community
+#   without an upper bound and imports
+#   `langchain_community.chat_models.vertexai`, which 0.4.x removed. Installed
+#   against the current release it resolves cleanly, installs cleanly, and then
+#   raises ModuleNotFoundError on `import ragas`. 0.3.31 is the last release
+#   that still carries that module, and it coexists with langchain-core 1.x.
+#
+#   Remove this pin only after checking that `import ragas` still works.
+langchain-community==0.3.31

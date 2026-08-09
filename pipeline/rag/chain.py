@@ -153,6 +153,16 @@ class AnswerChain:
         self.model = model if model is not None else build_model()
 
     def answer(self, question: str) -> dict:
+        return self.answer_and_context(question)[0]
+
+    def answer_and_context(self, question: str) -> tuple[dict, dict]:
+        """The answer, and the exact context it was built from.
+
+        Evaluation needs both, and needs them to be the same retrieval. Asking
+        the retriever again afterwards looks equivalent and is not: a snapshot
+        landing in between would have the judge scoring the answer against
+        evidence the answer never saw.
+        """
         # - Timed from before retrieval, so latency_ms is what the person
         #   asking actually waited. Timing only the model would report a fast
         #   number on a slow answer and hide a cold cache entirely.
@@ -172,7 +182,7 @@ class AnswerChain:
         )
 
         latency_ms = int((time.perf_counter() - started) * 1000)
-        return self._grounded(result, context, latency_ms)
+        return self._grounded(result, context, latency_ms), context
 
     def _grounded(self, result: GroundedAnswer, context: dict, latency_ms: int) -> dict:
         """Drop citations the context cannot support, and never drop the field.
