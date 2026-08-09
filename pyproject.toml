@@ -21,6 +21,15 @@ dev = ["pytest", "pytest-cov"]
 # - Kept out of requirements.txt on purpose: dbt is a separate tool that runs
 #   against the database, not something the pipeline image needs to carry.
 dbt = ["dbt-core==1.12.0", "dbt-postgres==1.11.0"]
+# - Same reasoning, one phase later. The chain answers questions on demand; the
+#   daily job never asks any. Mirrored in requirements-rag.txt, which is what
+#   the RAG image and CI install from.
+rag = [
+    "anthropic==0.121.0",
+    "langchain==1.3.14",
+    "langchain-anthropic==1.5.4",
+    "langchain-core==1.5.3",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

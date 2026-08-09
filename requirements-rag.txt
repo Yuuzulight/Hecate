@@ -1,0 +1,15 @@
+# Phase 2 only. Kept out of requirements.txt because the pipeline image is
+# 51.3 MB and runs a two-and-a-half minute daily job; LangChain, the Anthropic
+# SDK and their transitive dependencies have no business in it. The RAG service
+# is a separate image from the same repository, on the same reasoning that
+# keeps dbt in its own.
+#
+# These pins replace the ones in the original scope, which could not be
+# installed: ragas==0.0.60 was never published, and anthropic==0.18.0 predates
+# every current Claude model, so the chain would have targeted an SDK that
+# cannot call the model it is written for.
+
+anthropic==0.121.0
+langchain==1.3.14
+langchain-anthropic==1.5.4
+langchain-core==1.5.3

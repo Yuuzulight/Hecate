@@ -175,9 +175,15 @@ class WarehouseRetriever:
         )
 
     def fastest_growing(self, limit: int = DEFAULT_LIMIT) -> list[dict]:
+        """Biggest one-day star movements.
+
+        The id comes along for citation. A name is what a person reads, but
+        names collide across sources - `vite` is three different rows - so an
+        answer that cites one cannot be checked against anything in particular.
+        """
         return self._rows(
             """
-            SELECT r.name, r.source, r.language, g.stars,
+            SELECT r.id, r.name, r.source, r.language, g.stars,
                    g.stars_gained_1d, g.stars_gained_7d,
                    g.stars_growth_pct_7d, g.days_observed
             FROM analytics_marts.fct_repository_growth g
@@ -199,7 +205,7 @@ class WarehouseRetriever:
         """
         return self._rows(
             """
-            SELECT r.name, r.source,
+            SELECT r.id, r.name, r.source,
                    sum(m.posts)         AS posts,
                    sum(m.decayed_score) AS decayed_score,
                    max(m.week_starting) AS latest_week
@@ -248,7 +254,7 @@ class WarehouseRetriever:
         """
         return self._rows(
             """
-            SELECT name, language, stars, days_since_update
+            SELECT id, name, language, stars, days_since_update
             FROM analytics_staging.stg_repositories
             WHERE stars > 5000 AND days_since_update > 180 AND NOT archived
             ORDER BY days_since_update DESC
