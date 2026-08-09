@@ -195,13 +195,13 @@ Then `kubectl port-forward svc/grafana 3000:3000 -n hecate` for the dashboard.
 
 The four CronJobs ship **suspended**, because a fixed UTC time is no use on a machine that gets shut down — the schedule gets missed more often than met, and a missed snapshot is a permanent hole in the history.
 
-`ops/windowed-run.ps1` covers that case. It starts Docker Desktop, waits for the cluster, creates a Job from each CronJob template in order, checks a snapshot actually landed for today, and shuts Docker down again — about fifteen minutes rather than leaving it running. If Docker was already up when it started, it leaves it up.
+`ops/windowed-run.ps1` covers that case. It starts Docker Desktop, waits for the cluster, creates a Job from each CronJob template in order, checks a snapshot actually landed for today, and shuts Docker down again — a bit over two minutes on a weekday, nearer four on the Sunday that adds a full model refresh. If Docker was already up when it started, it leaves it up.
 
 ```bash
 powershell -ExecutionPolicy Bypass -File ops/windowed-run.ps1
 ```
 
-Point Task Scheduler at that once a day with *run as soon as possible after a missed start*, and the machine only has to be on at some point, not at a particular time. Every run appends a JSON line to `%LOCALAPPDATA%\Hecate\run-log.jsonl` with the job results and row counts, so you can see what happened without starting anything.
+Point Task Scheduler at that once a day with *run as soon as possible after a missed start*, and the machine only has to be on at some point, not at a particular time. Every run appends a JSON line to `ops/logs/run-log.jsonl` with the job results and row counts, so you can see what happened without starting anything. It lives next to the script rather than under `%LOCALAPPDATA%` on purpose: that path is redirected for packaged applications, so a log written there by the scheduled task and a log read there by anything else can be two different files that both report the path they were given.
 
 If the machine does stay on, unsuspend them and ignore all of the above:
 
@@ -229,6 +229,32 @@ Alerting splits along the same line. Prometheus rules cover liveness — job sta
 
 Extraction age is the alert that matters most. If it climbs across every source at once, the job has stopped running, and nothing else will tell you.
 
+The question-answering service keeps its own counters on port 8001, because they live in that process and die with it — `hecate_rag_questions_total{outcome}`, `hecate_rag_tokens_total{kind}`, `hecate_rag_cost_usd_total`, and `hecate_rag_context_cache_total{result}`. Cost is the one alert here about money rather than data: every other component fails by producing something wrong, that one fails by producing a bill.
+
+## Asking it questions
+
+Everything above collects and models the data. This part answers questions about it in English.
+
+```bash
+python -m pipeline.rag.api      # serves on http://localhost:8001
+```
+
+Then open `http://localhost:8001` and type a question. You'll get an answer, how confident the model was, the repositories it drew on as links you can follow, and how long it took.
+
+**It needs an Anthropic API key.** Put `ANTHROPIC_API_KEY=...` in your `.env`. Without one the service still starts and `/trending` still works, but asking a question returns an error saying what's missing. Answering is billed per question — a few cents a day at any sane rate of asking, and there's an alert if it isn't.
+
+Three endpoints:
+
+| endpoint | what it does |
+|---|---|
+| `POST /ask` | `{"question": "..."}` → answer, confidence, sources, latency |
+| `GET /trending` | what's growing and what's being discussed, straight from the warehouse — no model, no cost |
+| `GET /eval-metrics` | quality scores from the most recent evaluation runs |
+
+The answer is built from SQL against the analytics models, not a similarity search — the questions people ask are aggregates, and the whole corpus is small enough that picking the right rows beats finding similar ones. The model is given those rows and told to answer from them and nothing else; every repository it cites is checked against what it was actually shown before you see it. If the data can't answer, it's supposed to say so, and there's an evaluation harness that scores whether it does.
+
+`RAG_ENABLED=0` turns answering off without touching anything else — useful if a bill starts moving. `/trending` keeps working.
+
 ## Contributing
 
 Open an issue before anything substantial, and keep pull requests to one thing.
@@ -239,7 +265,7 @@ Two conventions. Nulls are meaningful: if a source doesn't report a field it sta
 
 ## Status
 
-Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups.
+Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups. The question-answering service on top of it is built and deployed but has not yet been run against a live model — it needs a key, and everything about it that can be checked without one has been.
 
 Momentum needs about a week of snapshot history before it means much — with fewer days than that, the growth windows are correctly null and the ranking leans on attention alone. That resolves itself rather than needing a change.
 
@@ -247,7 +273,7 @@ Known limits are listed at the end of `ARCHITECTURE.md`. The honest short versio
 
 ## Stack
 
-Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana.
+Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana, Redis, FastAPI, LangChain, Claude.
 
 ## Licence
 

@@ -8,10 +8,11 @@ official BigQuery download statistics. That also supplies the download figures
 the JSON API will not.
 
 And the JSON API's `downloads` block is a deprecated stub - it answers -1 for
-every window rather than a real figure. Actual numbers live in the public
-BigQuery dataset, or behind pypistats.org, both of which are a separate job from
-reading package metadata. Until one of those is wired up, downloads stays empty,
-which is the honest answer rather than a zero that would read as nobody using it.
+every window rather than a real figure. Which is why the ranking dataset above
+does double duty: it carries the download counts too, so they arrive from the
+same request that decides which packages to fetch. A package that falls back to
+the hand-written list gets no figure at all rather than a zero, because zero
+would read as nobody using it.
 
 What PyPI does give, and npm doesn't: a real first-publish date, recoverable
 from the release history, and a language that isn't a guess.

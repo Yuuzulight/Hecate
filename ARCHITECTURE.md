@@ -124,21 +124,20 @@ They also run in their own schema. They truncate between cases, and pointed at t
 
 - npm and PyPI samples are shaped by their seed lists rather than being true rankings
 - npm and GitLab contribute no language data, so `dim_languages` covers GitHub and PyPI only
-- PyPI download figures aren't collected. Its JSON API returns a deprecated stub answering -1; the real numbers live in a public BigQuery dataset, which is a separate piece of work
+- PyPI download figures come from the same third-party dataset that supplies its ranking, since the JSON API's own `downloads` block is a deprecated stub answering -1. A package that falls back to the hand-written seed list has no figure at all
 - Staleness isn't quite the same measurement on every source. GitHub uses the last commit, npm the last publish, PyPI the last release — but GitLab's project listing only offers last-activity-of-any-kind, so an issue comment keeps an abandoned project looking fresh. Getting a real push date costs a request per project, the same trade as language
-- Everything describes now. There's no history, so growth rate and trend aren't answerable without a snapshot table
+- History is short. Snapshots started on 7 August, so seven- and thirty-day growth are null rather than zero until that much has accumulated — a distinction the dashboard and the answering prompt both have to make explicitly, because a null read as a zero says a project stopped growing
 - The NetworkPolicy needs a CNI that enforces it, which Docker Desktop's built-in cluster doesn't. Applying it there documents intent rather than restricting anything
 
 ## If this continued
 
-Roughly in order of what would add most:
+This list was written at v1.0.0 and had gone stale in both directions — three of its items shipped, and one arrived by a route it did not anticipate. What is actually left:
 
-1. PyPI downloads from BigQuery, which would give three of the four sources a real usage signal
-2. Snapshots over time. Everything currently describes now; growth rate and trend need history, which means a periodic snapshot table rather than upserting in place
-3. Language and a real push date for GitLab, if the extra request per project turns out to be affordable — it would fix two limitations at once
-4. Alerting on extraction age, since a job that silently stops running is the most likely real failure
-5. A Pushgateway, if per-run timing is ever worth having. The extract, transform and load histograms are recorded inside a pod that exits in seconds, so nothing ever scrapes them
-6. YouTube. Tutorial volume is a genuine adoption signal and the API is free, but tying a video to a repository is much harder than tying a link post to one — the title and description rarely carry a URL. Worth attempting only once name-based matching has a measured false-positive rate to borrow from, otherwise it is guesswork wearing a number
+1. Language and a real push date for GitLab, if the extra request per project turns out to be affordable — it would fix two limitations at once
+2. A Pushgateway, if per-run timing is ever worth having. The extract, transform and load histograms are recorded inside a pod that exits in seconds, so nothing ever scrapes them
+3. YouTube. Tutorial volume is a genuine adoption signal and the API is free, but tying a video to a repository is much harder than tying a link post to one — the title and description rarely carry a URL. Worth attempting only once name-based matching has a measured false-positive rate to borrow from, otherwise it is guesswork wearing a number
+
+Done since, and struck from the list rather than left to look pending: snapshots over time, which is what made growth rate and trend answerable at all; alerting on extraction age, which is the `ExtractionStalled` rule; and PyPI downloads — though not from BigQuery directly, as this list assumed. The ranking dataset that solves the "PyPI publishes no ranking" problem turns out to be generated from those same statistics and carries the figures with it, so one request fixed both.
 
 ## Attention, as distinct from adoption
 
@@ -156,7 +155,17 @@ The harder half is knowing what a post refers to. Matching on a link is reliable
 
 This also forces the snapshot table. A mention count without a time dimension cannot distinguish one viral post from sustained interest, so the history that growth rate and trend score always needed stops being optional.
 
-## Why there is a vector store
+## Answering questions
+
+Phase 2 puts a question-answering service over the warehouse: retrieve context, ask Claude, return an answer with the rows it was built from. Most of the decisions in it are about what the model is *not* allowed to do.
+
+Retrieval is structured SQL against the marts, not a similarity search. The questions this dataset gets asked — what is growing, what is being discussed, what is popular and going quiet — are aggregates, and no nearest-neighbour lookup surfaces an aggregate. Every block is bounded and already summarised, so a context that grows with the dataset cannot quietly start truncating.
+
+The prompt carries the same discipline as the dashboard. It is told what the data cannot say: that a null seven-day figure means the history is too short rather than that growth stopped, that npm and PyPI report no stars and GitHub no downloads so a measure must not be compared across a source that does not collect it, and that similarity between descriptions is a reason to look rather than evidence about either project. It is also told the context is data and never instructions, because repository descriptions are written by strangers. Cited repository ids are checked against the retrieved context before the answer is returned — an id the model produced from memory reads exactly like one it read, and points at nothing.
+
+The original intention was to run at temperature 0.2, to stop the model filling gaps with things that sound right. That parameter no longer exists on current models — sending it is rejected outright — so the reasoning survives instead in the prompt, in a confidence the model has to commit to, and in that citation check.
+
+### Why there is a vector store
 
 Because it was worth learning to build one, not because the data needed it. That is the whole reason and it is better written down than implied.
 
@@ -165,3 +174,31 @@ Retrieval here is structured SQL against the marts. The questions this dataset g
 So the embeddings are built to be an addition rather than a foundation. Similarity is one more block alongside the structured ones, labelled as similarity everywhere it appears, and capped smaller than the rest so five weak rows cannot outweigh seven strong blocks. Search swallows every error it can hit. Dropping every stored vector changes what an answer cites, not whether there is one — which is the property that makes it safe to have built something the data did not ask for.
 
 The cost discipline is real even if the scale is not. Only rows whose text has changed are re-embedded, so the first run does the corpus and every run after does the handful of descriptions that moved; vectors are shortened to 256 dimensions because the full 1536 would be 60MB of JSON against a Redis capped at 128MB. Re-embedding everything nightly was the original plan, and it was the mistake behind the original cost estimate.
+
+### On demand, and what the uptime target means
+
+The cluster is off most of the day. That was decided a day before the service was built, when the CronJobs were suspended in favour of a script that starts Docker, runs the day's work in about two and a half minutes, and shuts it down again — so the API is brought up the same way rather than standing permanently. Asking a question is start, port-forward, ask, stop.
+
+Which makes the uptime figure worth stating carefully: **99.5% applies to while it is running**, not to wall-clock. Measured against the clock the number would be far lower and would be describing a switched-off machine rather than a service.
+
+The under-five-second target is the query, not the start. Starting costs whatever Docker Desktop costs on the day — the daily window, which starts Docker and then does real work, finishes in a bit over two minutes end to end, so the start itself is well inside that. The service adds almost nothing to it.
+
+A permanent cluster was considered and rejected: it reverses a one-day-old decision for something asked a handful of times a week. Hosting it somewhere else is the right answer only if the goal becomes a URL other people can open, which is a different objective and a paid one.
+
+The service is deliberately not part of the daily window. That window collects, rebuilds the models and takes a backup; it has no use for an API, and starting one more thing lengthens a window whose whole point is being short.
+
+### Why the judge is Claude
+
+RAGAS defaults to OpenAI and will use it for anything it can. Left alone that means a second key, a second bill, and quality scores that cost more than the answers they grade — so the judge is pointed at Claude explicitly.
+
+Pointing it there is the easy half. The harder half is that RAGAS reaches OpenAI through a second door: its usual relevance metric works by embedding the answer to compare it, and Anthropic sells no embeddings API, so choosing that metric would have pulled the OpenAI client back in with `provider="anthropic"` sitting in the config looking correct. Both metrics used here need only a language model, and a test asserts that by inspecting their signatures rather than by reading the setting.
+
+The two scores stay apart, because they mean different things. A low faithfulness score is an answer that invented something; a low relevance score is one that was merely unhelpful. Only the first is a hallucination, and reporting them as a single quality number loses the only distinction worth acting on. A metric that could not run at all is stored as null rather than zero — an unreachable judge is an outage, and a zero would be indistinguishable from a confident lie in every average taken afterwards.
+
+### The switch
+
+`RAG_ENABLED` is a rollback. Set to `0`, `/ask` returns 503 **before the chain is touched**, so nothing reaches the model and nothing is billed. A flag that let the request through and discarded the answer would still have paid for the tokens, which is not a rollback.
+
+It defaults on, unlike `NAME_MATCHING`, because it is a switch you reach for during an incident rather than one you opt into — a service that had to be enabled after every deploy would spend its first hour serving 503s while somebody worked out why. It is an environment variable, so turning it off is `kubectl set env` rather than a rebuild and a retag.
+
+The free endpoints stay up when it is off. `/trending` and `/eval-metrics` call no model and cost nothing, and a rollback that also removes the read-only view of the warehouse is a worse rollback. The health probe is `/health` and never `/ask`: a probe that asked a question would spend money on every check, and with the switch off it would take the 503 and restart the pod in a loop, turning a deliberate rollback into an outage.
