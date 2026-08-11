@@ -185,9 +185,18 @@ function Remove-PreviousWindowedJobs {
 function Invoke-HecateJob($CronJob, $Stamp) {
     $name = "$CronJob-w$Stamp"
     Write-Step "running $CronJob"
-    kubectl create job $name --from="cronjob/$CronJob" -n hecate 2>$null | Out-Null
+    # - Capturing rather than discarding, because "could not create job" reads
+    #   identically whether the CronJob was never applied or the cluster went
+    #   away mid-run, and those are not the same morning. kubectl's own line
+    #   says which. Safe to merge streams here only because
+    #   $ErrorActionPreference is Continue - under Stop, 5.1 turns a native
+    #   command's stderr into a terminating NativeCommandError.
+    $createOutput = kubectl create job $name --from="cronjob/$CronJob" -n hecate 2>&1
     if ($LASTEXITCODE -ne 0) {
-        return [ordered]@{ job = $CronJob; ok = $false; detail = 'could not create job' }
+        $why = (($createOutput | ForEach-Object { $_.ToString().Trim() }) -join '; ').Trim()
+        if ($why.Length -gt 300) { $why = $why.Substring(0, 300) }
+        $detail = if ($why) { "could not create job: $why" } else { 'could not create job' }
+        return [ordered]@{ job = $CronJob; ok = $false; detail = $detail }
     }
 
     # - Polled rather than `kubectl wait --for=condition=complete`, which only
