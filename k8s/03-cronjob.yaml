@@ -55,7 +55,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: pipeline
-              image: ghcr.io/yuuzulight/hecate:1.2.0
+              image: ghcr.io/yuuzulight/hecate:2.0.0
               env:
                 - name: DB_HOST
                   value: postgres.hecate.svc.cluster.local
