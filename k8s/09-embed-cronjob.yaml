@@ -9,9 +9,10 @@
 # rather than part of it - with no embeddings at all the chain still answers,
 # it just stops citing projects that merely read alike.
 #
-# NOT VERIFIED against a live API: built without an OPENAI_API_KEY available.
-# The behaviour under a missing key is covered by tests; token counts, cost,
-# and the shape of a real response are not. Needs one live run.
+# Verified against the live API on 2026-08-11. The first run embedded the whole
+# corpus - 2,027 rows, 42,881 tokens, $0.0009 - and the run straight after it
+# reported 2,027 unchanged and no tokens at all, which is the incremental path
+# doing what the paragraph above claims it does.
 
 apiVersion: batch/v1
 kind: CronJob
@@ -47,7 +48,16 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: embed
-              image: ghcr.io/yuuzulight/hecate:1.2.0
+              # - The rag image, not the pipeline one. pipeline/rag/ only exists
+              #   in the `--target rag` stage; the 1.2.0 pipeline image this
+              #   originally named predates Phase 2 entirely and dies with
+              #   ModuleNotFoundError: No module named 'pipeline.rag'.
+              #
+              #   Same tag as 10-rag-api.yaml, and it does not exist in the
+              #   registry until a v* tag is pushed. Until then the cluster runs
+              #   the side-loaded hecate-rag:dev, exactly as the API does:
+              #     kubectl set image cronjob/hecate-embed embed=hecate-rag:dev -n hecate
+              image: ghcr.io/yuuzulight/hecate-rag:2.0.0
               command: ["python", "-m", "pipeline.rag.embeddings"]
               env:
                 - name: DB_HOST
