@@ -53,10 +53,9 @@ spec:
               #   originally named predates Phase 2 entirely and dies with
               #   ModuleNotFoundError: No module named 'pipeline.rag'.
               #
-              #   Same tag as 10-rag-api.yaml, and it does not exist in the
-              #   registry until a v* tag is pushed. Until then the cluster runs
-              #   the side-loaded hecate-rag:dev, exactly as the API does:
-              #     kubectl set image cronjob/hecate-embed embed=hecate-rag:dev -n hecate
+              #   Same tag as 10-rag-api.yaml. Published by v2.0.0 and public,
+              #   so `kubectl apply -f k8s/` resolves it on a clean machine
+              #   with nothing side-loaded and no pull secret.
               image: ghcr.io/yuuzulight/hecate-rag:2.0.0
               command: ["python", "-m", "pipeline.rag.embeddings"]
               env:
