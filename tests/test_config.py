@@ -11,6 +11,7 @@ ALL_VARS = [
     "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
     "GITHUB_TOKEN", "GITLAB_TOKEN", "NPM_REGISTRY", "PYPI_REGISTRY",
     "BATCH_SIZE", "RETRY_ATTEMPTS",
+    "GOOGLE_API_KEY", "RAG_PROVIDER",
 ]
 
 
@@ -73,3 +74,23 @@ def test_blank_value_falls_back_to_the_default(env):
 def test_repr_hides_the_password(env):
     env.setenv("DB_PASSWORD", "hunter2")
     assert "hunter2" not in repr(Config())
+
+
+def test_google_api_key_defaults_to_blank(env):
+    assert Config().google_api_key == ""
+
+
+def test_rag_provider_defaults_to_gemini(env):
+    assert Config().rag_provider == "gemini"
+
+
+@pytest.mark.parametrize("value", ["anthropic", "openai", "gemini", "ANTHROPIC", "OpenAI"])
+def test_rag_provider_accepts_the_known_values_case_insensitively(env, value):
+    env.setenv("RAG_PROVIDER", value)
+    assert Config().rag_provider == value.lower()
+
+
+def test_an_unknown_rag_provider_is_an_error(env):
+    env.setenv("RAG_PROVIDER", "chatgpt")
+    with pytest.raises(ConfigError, match="RAG_PROVIDER"):
+        Config()

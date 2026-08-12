@@ -87,6 +87,22 @@ class Config:
         #   back, and every test must all work without a key.
         self.anthropic_api_key = _optional("ANTHROPIC_API_KEY")
 
+        # - Optional for the same reason as the other two keys: importing
+        #   this module and running every test that doesn't touch the
+        #   network must work without it.
+        self.google_api_key = _optional("GOOGLE_API_KEY")
+
+        # - Picks which of the three keys above actually gets used. Default
+        #   is gemini, not anthropic: Gemini's free tier is what makes /ask
+        #   and evaluation runs possible without Anthropic credits the
+        #   account doesn't have. Validated here rather than left to fail on
+        #   first use, matching how _int() already validates other settings.
+        self.rag_provider = _optional("RAG_PROVIDER", "gemini").lower()
+        if self.rag_provider not in ("gemini", "anthropic", "openai"):
+            raise ConfigError(
+                f"RAG_PROVIDER must be one of gemini, anthropic, openai - got {self.rag_provider!r}"
+            )
+
         # - A rollback switch, so unlike NAME_MATCHING it defaults on: you set
         #   it to 0 to stop spending, and a service that had to be switched on
         #   after every deploy would spend its first hour returning 503 while
