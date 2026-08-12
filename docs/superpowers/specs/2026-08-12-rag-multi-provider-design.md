@@ -42,7 +42,7 @@ def spec_for(config: Config) -> ProviderSpec:
     # so this is a lookup, not a second validation.
     return SPECS[config.rag_provider]
 
-def build_chat_model(config: Config, max_tokens: int) -> object:
+def build_chat_model(config: Config, max_tokens: int, effort: str | None = None) -> object:
     """The bare chat model for the configured provider.
 
     Branches on spec.name because the three SDKs take genuinely different
@@ -52,9 +52,16 @@ def build_chat_model(config: Config, max_tokens: int) -> object:
     key if the configured provider's key is not set. Used directly by the
     judge, which needs a bare model to wrap rather than one already bound to
     an answer schema.
+
+    effort is passed through to Claude's output_config only when given, and
+    ignored by the other two branches. Optional and unset by default because
+    the judge - the only caller that does not set it - relied on Claude's
+    own default (unset means "high") before this module existed, and a
+    shared builder defaulting it to chain.py's "medium" would have changed
+    the judge's behaviour as a side effect of an unrelated refactor.
     """
 
-def build_structured_model(config: Config, schema: type, max_tokens: int) -> object:
+def build_structured_model(config: Config, schema: type, max_tokens: int, effort: str | None = None) -> object:
     """build_chat_model, already bound to a schema via with_structured_output.
 
     Which `method` argument each provider needs - if any - is exactly the
@@ -81,13 +88,13 @@ GPT-5.1's per-token prices are left as a placeholder in this spec deliberately -
 ## Changes to `chain.py`
 
 - `AnswerChain.__init__(self, retriever, config, model=None)` - `config` becomes required. It was never threaded through before because `ChatAnthropic` read `ANTHROPIC_API_KEY` from the environment on its own; provider selection means the chain now has to know which provider it is building.
-- `build_model(config)` becomes `providers.build_structured_model(config, GroundedAnswer, MAX_TOKENS)` - the `with_structured_output` call and its provider-specific `method` argument move into `providers.py` entirely, so `chain.py` no longer needs to know which providers need which method.
+- `build_model(config)` becomes `providers.build_structured_model(config, GroundedAnswer, MAX_TOKENS, effort=EFFORT)` - the `with_structured_output` call and its provider-specific `method` argument move into `providers.py` entirely, so `chain.py` no longer needs to know which providers need which method. `EFFORT = "medium"` stays a `chain.py` constant and is passed explicitly, same value as today.
 - The chain carries `self.model_name = providers.spec_for(config).model` and includes it in its returned dict as `answer_model` - moves that field's source of truth into the chain itself, replacing `evaluation.py::main()`'s current `answer["answer_model"] = ANSWER_MODEL`, which reads a fixed import rather than what actually answered.
 - `_record_spend()` reads `spec.price_per_mtok_input` / `price_per_mtok_output` instead of the current module-level `PRICE_PER_MTOK_INPUT` / `PRICE_PER_MTOK_OUTPUT` constants, so a Gemini-answered question correctly logs $0 rather than Claude's price.
 
 ## Changes to `evaluation.py`
 
-- `build_judge(config)` becomes `ragas.llms.LangchainLLMWrapper(providers.build_chat_model(config, max_tokens=JUDGE_MAX_TOKENS))` - the bare model, not the structured one, since the judge scores free-text answers rather than emitting `GroundedAnswer` itself.
+- `build_judge(config)` becomes `ragas.llms.LangchainLLMWrapper(providers.build_chat_model(config, max_tokens=JUDGE_MAX_TOKENS))` - the bare model, not the structured one, since the judge scores free-text answers rather than emitting `GroundedAnswer` itself. `effort` is deliberately not passed here, preserving the judge's existing unset-effort behavior exactly.
 - `JUDGE_MODEL` stops being a fixed module constant; `evaluate()` reads `providers.spec_for(config).model` fresh, so `rag_evaluations.judge_model` always reflects what actually judged that row rather than a name that could go stale if the provider changes between runs.
 
 ## Call sites
