@@ -12,7 +12,14 @@ module's spec_for for the model name and pricing, the same lookup the chain
 uses. Gemini is the default because its free tier is what makes any of this
 runnable without Anthropic credits the account doesn't have - see the
 design spec for the full reasoning, including why a unifying library like
-LiteLLM was set aside in favour of three explicit branches.
+LiteLLM was set aside in favour of three explicit branches. That removes the
+Anthropic-credits blocker specifically, not every possible one: a Google
+Cloud project still carries its own billing state, and live verification
+confirmed the deployment/provider-selection wiring end-to-end on
+RAG_PROVIDER=gemini while the answer itself was blocked by that project's own
+prepay credits being exhausted (429 RESOURCE_EXHAUSTED) - an account-level
+quota fact, not a code defect, but not something the free tier guarantees
+away either.
 """
 
 from dataclasses import dataclass
@@ -34,6 +41,11 @@ SPECS = {
     #   session ("no longer available to new users" - retired), confirmed
     #   against a real key. gemini-3.5-flash is confirmed available and
     #   working against the same key.
+    # - $0.00/$0.00 means hecate_rag_cost_usd_total never increments while
+    #   running on the default provider, so RagSpendHigh (severity: critical,
+    #   see k8s/monitoring/alert-rules.yaml) cannot fire regardless of usage
+    #   under RAG_PROVIDER=gemini. hecate_rag_tokens_total is the signal that
+    #   actually moves and is what to watch instead on Gemini.
     "gemini": ProviderSpec("gemini", "gemini-3.5-flash", 0.0, 0.0),
     "anthropic": ProviderSpec("anthropic", "claude-opus-5", 5.00, 25.00),
     # - PLACEHOLDER pricing, not verified against OpenAI's real pricing page
@@ -131,9 +143,9 @@ def build_chat_model(config: Config, max_tokens: int, effort: str | None = None)
 #   forces tool_choice, which the API rejects whenever thinking is on, and
 #   Claude Opus 5 has thinking on by default. OpenAI's structured output
 #   supports the same method name. Gemini's integration takes no method
-#   argument at all - not yet confirmed by a live call (see Task 2's report:
-#   the manual Gemini smoke test is deferred pending a real GOOGLE_API_KEY),
-#   so this is carried over from the plan rather than independently verified.
+#   argument at all - confirmed by a live call against a real GOOGLE_API_KEY
+#   (Task 2's manual Gemini smoke test, run again in Task 8's final
+#   verification), not just carried over from the plan.
 _STRUCTURED_OUTPUT_METHOD = {"gemini": None, "anthropic": "json_schema", "openai": "json_schema"}
 
 

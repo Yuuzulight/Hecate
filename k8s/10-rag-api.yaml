@@ -92,9 +92,9 @@ spec:
                   #   which reports the same fact somewhere nobody is looking.
                   optional: true
             # - Which provider answers and judges - see pipeline/rag/providers.py.
-            #   Optional with no default in the manifest: unset, Config()
-            #   defaults to gemini in the code, so the manifest doesn't need to
-            #   repeat that default to get it.
+            #   Set explicitly here (rather than relying on Config()'s own
+            #   gemini default) so the pod's actual configuration is readable
+            #   from the manifest without reading the code.
             - name: RAG_PROVIDER
               value: "gemini"
             - name: GOOGLE_API_KEY
@@ -113,8 +113,10 @@ spec:
                   optional: true
           resources:
             # - Sized for something that idles. The floor is the import cost:
-            #   LangChain and the Anthropic SDK are most of the resident set
-            #   before a single question arrives.
+            #   the image now carries all three provider SDKs (Anthropic,
+            #   Gemini, OpenAI), but providers.py imports each one lazily, so
+            #   only the configured provider's SDK actually loads into the
+            #   resident set before a single question arrives.
             requests:
               cpu: 100m
               memory: 384Mi

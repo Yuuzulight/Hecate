@@ -239,11 +239,13 @@ def test_the_judge_is_wired_to_the_configured_provider(monkeypatch):
     #   shape wrong: ragas 0.4.3's collections metrics (what build_metrics
     #   actually uses) reject a LangchainLLMWrapper outright with "Collections
     #   metrics only support modern InstructorLLM" - see task-4-report.md.
-    #   build_judge was adjusted to build an InstructorLLM via
-    #   ragas.llms.llm_factory over a raw provider SDK client instead, which
-    #   is what these assertions check: the raw client underneath is
-    #   Anthropic's, not some other provider's, when RAG_PROVIDER says
-    #   anthropic.
+    #   build_judge was adjusted to build an InstructorLLM, but not via
+    #   ragas.llms.llm_factory - that was tried first and found broken for
+    #   Gemini specifically (a sync/async mismatch; see evaluation.py's module
+    #   docstring). It uses evaluation.py's own _instructor_client helper over
+    #   a raw provider SDK client instead, which is what these assertions
+    #   check: the raw client underneath is Anthropic's, not some other
+    #   provider's, when RAG_PROVIDER says anthropic.
     assert judge.provider == "anthropic"
     assert judge.model == "claude-opus-5"
     assert type(judge.client.client).__module__.startswith("anthropic")

@@ -89,6 +89,13 @@ data:
           #
           #   `for` is deliberately short - by the time this fires the money is
           #   already spent, and waiting to confirm the trend only spends more.
+          #
+          #   This dollar guard is provider-dependent, not a universal signal:
+          #   RAG_PROVIDER=gemini (the default) is priced at $0.00/$0.00 in
+          #   pipeline/rag/providers.py, so hecate_rag_cost_usd_total never
+          #   moves and this alert is inert on the default provider regardless
+          #   of how much is actually being asked. hecate_rag_tokens_total is
+          #   the metric that reflects real usage when running on Gemini.
           - alert: RagSpendHigh
             expr: increase(hecate_rag_cost_usd_total[24h]) > 3
             for: 10m

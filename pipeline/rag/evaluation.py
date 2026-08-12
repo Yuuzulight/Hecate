@@ -210,6 +210,13 @@ def build_judge(config: Config):
 
     spec = providers.spec_for(config)
     client = _instructor_client(config, spec)
+    # - provider=spec.name passes "gemini" here, not instructor's own "google"
+    #   label - so InstructorLLM's internal _map_provider_params takes a
+    #   pass-through branch instead of its intended generation_config-wrapping
+    #   branch for Google. This works today only because instructor's own
+    #   genai handler performs an equivalent remapping itself - confirmed live
+    #   by observing max_tokens correctly reaching model_args. Fragile but
+    #   working; worth knowing before "cleaning up" the provider string.
     return InstructorLLM(
         client=client, model=spec.model, provider=spec.name, max_tokens=JUDGE_MAX_TOKENS
     )
@@ -220,7 +227,8 @@ def build_metrics(judge) -> dict:
 
     Neither takes an embeddings model. That is the constraint that keeps the
     judge honest: RAGAS' usual relevance metric embeds the answer to compare
-    it, and there is no Anthropic embeddings API for it to use.
+    it, and neither Anthropic nor Gemini sells an embeddings API the same
+    first-party way OpenAI's client does.
     """
     return {
         "faithfulness": Faithfulness(llm=judge),

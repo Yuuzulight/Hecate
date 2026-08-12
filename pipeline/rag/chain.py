@@ -36,7 +36,9 @@ from pipeline.rag import providers
 #   field the model has to commit to, and every cited id checked against the
 #   context before it reaches the caller. Pin an older model if the literal
 #   parameter is ever wanted back - it is one line, and it costs the newer
-#   model's grounding.
+#   model's grounding. EFFORT only affects the Anthropic branch (see
+#   providers.build_chat_model) - it is silently ignored on the other two
+#   providers.
 EFFORT = "medium"
 
 # - A cap rather than a target. Thinking is on by default on this model and
