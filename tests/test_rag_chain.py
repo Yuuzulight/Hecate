@@ -358,6 +358,35 @@ def test_tokens_and_cost_are_counted_from_the_raw_message():
     assert counter_value(metrics.rag_cost) - before_cost == pytest.approx(expected)
 
 
+def test_a_gemini_answer_costs_nothing():
+    # - anthropic's price_per_mtok happens to equal the deleted hardcoded
+    #   PRICE_PER_MTOK_INPUT/OUTPUT constants, so the anthropic-flavoured test
+    #   above would pass just as well against stale hardcoded values as
+    #   against a genuine providers.spec_for(self.config) lookup. Only a
+    #   non-anthropic provider - gemini is free - actually proves the cost is
+    #   read from the configured provider rather than pinned to Claude's price.
+    from pipeline import metrics
+    from pipeline.rag import providers
+
+    chain, _ = chain_returning()
+    chain.config = fake_config(rag_provider="gemini", anthropic_api_key=None)
+
+    spec = providers.spec_for(chain.config)
+    assert spec.price_per_mtok_input == 0.0
+    assert spec.price_per_mtok_output == 0.0
+
+    before_cost = counter_value(metrics.rag_cost)
+
+    answer = GroundedAnswer(answer="a", confidence="high", sources=Sources())
+    chain._unwrap({
+        "raw": FakeMessage({"input_tokens": 12000, "output_tokens": 400}),
+        "parsed": answer,
+        "parsing_error": None,
+    })
+
+    assert counter_value(metrics.rag_cost) - before_cost == 0.0
+
+
 def test_an_unreadable_answer_is_loud_rather_than_empty():
     # - Returning an empty answer here would be indistinguishable from the data
     #   having nothing to say, which is the one confusion this whole module is
