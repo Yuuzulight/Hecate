@@ -24,7 +24,11 @@ class ProviderSpec:
 
 
 SPECS = {
-    "gemini": ProviderSpec("gemini", "gemini-2.5-flash", 0.0, 0.0),
+    # - Switched from gemini-2.5-flash: it 404s for this account as of this
+    #   session ("no longer available to new users" - retired), confirmed
+    #   against a real key. gemini-3.5-flash is confirmed available and
+    #   working against the same key.
+    "gemini": ProviderSpec("gemini", "gemini-3.5-flash", 0.0, 0.0),
     "anthropic": ProviderSpec("anthropic", "claude-opus-5", 5.00, 25.00),
     # - PLACEHOLDER pricing, not verified against OpenAI's real pricing page
     #   (no live browsing available when this was written) - confirm before

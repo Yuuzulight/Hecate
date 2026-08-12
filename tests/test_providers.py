@@ -26,7 +26,7 @@ def env(monkeypatch):
 def test_spec_for_gemini_is_the_default(env):
     spec = providers.spec_for(Config())
     assert spec.name == "gemini"
-    assert spec.model == "gemini-2.5-flash"
+    assert spec.model == "gemini-3.5-flash"
     assert spec.price_per_mtok_input == 0.0
     assert spec.price_per_mtok_output == 0.0
 
