@@ -1,12 +1,18 @@
 """Which LLM answers and judges, chosen by one setting.
 
-Three providers, one interface: a bare chat model any caller can wrap
-(the judge does, via ragas.llms.LangchainLLMWrapper), and one already bound
-to an answer schema (the answering chain uses this one). Gemini is the
-default because its free tier is what makes any of this runnable without
-Anthropic credits the account doesn't have - see the design spec for the
-full reasoning, including why a unifying library like LiteLLM was set aside
-in favour of three explicit branches.
+Three providers, one interface: a bare chat model any caller can wrap, and
+one already bound to an answer schema built on top of it (the answering
+chain uses this one, via build_structured_model). The judge in
+evaluation.py does not call into this module for its model the way the
+chain does - ragas 0.4.3's collections metrics need a raw, async-patched
+provider SDK client rather than the LangChain chat model this module
+returns, so evaluation.py builds that client itself (see its module
+docstring for why, confirmed live rather than assumed). It still uses this
+module's spec_for for the model name and pricing, the same lookup the chain
+uses. Gemini is the default because its free tier is what makes any of this
+runnable without Anthropic credits the account doesn't have - see the
+design spec for the full reasoning, including why a unifying library like
+LiteLLM was set aside in favour of three explicit branches.
 """
 
 from dataclasses import dataclass
@@ -50,16 +56,23 @@ def build_chat_model(config: Config, max_tokens: int, effort: str | None = None)
     constructor arguments (max_output_tokens vs max_tokens, an effort field
     that only Claude has) - a generic signature here would just be a worse
     version of three specific ones. Raises ConfigError naming the missing
-    key if the configured provider's key is not set. Used directly by the
-    judge, which needs a bare model to wrap rather than one already bound to
-    an answer schema.
+    key if the configured provider's key is not set. build_structured_model,
+    immediately below, is the only production caller - it wraps this in
+    with_structured_output to bind an answer schema, which is what the
+    answering chain actually uses. (evaluation.py's judge does not call this:
+    it needs a raw provider SDK client, not a LangChain chat model - see this
+    module's and evaluation.py's docstrings.)
 
     effort is passed through to Claude's output_config only when given, and
-    ignored by the other two branches. Optional and unset by default because
-    the judge - the only caller that does not set it - relied on Claude's
-    own default (unset means "high") before this module existed, and a
-    shared builder defaulting it to chain.py's "medium" would have changed
-    the judge's behaviour as a side effect of an unrelated refactor.
+    ignored by the other two branches. Optional and unset by default: nothing
+    in this module invents an effort for a caller that does not ask for one.
+    That mattered originally because evaluation.py's judge - before this
+    module existed, and before it moved to building its own client - called
+    Claude's SDK directly with no effort argument, relying on Claude's own
+    default (unset means "high"); a shared builder defaulting it to chain.py's
+    "medium" would have changed the judge's behaviour as a side effect of an
+    unrelated refactor. The judge does not call this function at all anymore,
+    but the same caution still applies to whatever the next caller is.
 
     Rate limits (Gemini's free tier has a low RPM cap) are left to each
     integration's own retry/backoff rather than bespoke retry logic here.

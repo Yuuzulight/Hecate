@@ -27,3 +27,19 @@ langchain-community==0.3.31
 #   Faithfulness.score() call against Gemini failed on this before it was
 #   added.
 jsonref==1.1.0
+
+# - evaluation.py's build_judge imports instructor, google.genai and openai
+#   directly now (patching a raw async client per provider, since ragas's own
+#   collections metrics and llm_factory both turned out not to work for this
+#   - see task-4-report.md). All three previously arrived only as transitive
+#   dependencies - instructor via ragas (whose own pin on it has no version
+#   bound at all), google-genai via langchain-google-genai, openai via
+#   langchain-openai - so nothing here pinned the exact API build_judge
+#   depends on. instructor in particular is mid-migration between a v1 and v2
+#   tree; an unpinned bump could silently change or remove the
+#   from_genai(..., use_async=True) / Mode.JSON surface this relies on.
+#   Pinned to what this worktree already had installed and had the smoke test
+#   run against.
+instructor==1.15.4
+google-genai==2.17.0
+openai==2.54.0
