@@ -16,29 +16,58 @@ Two metrics, and the distinction between them is the point:
                  reporting the two as one number loses the only distinction
                  worth having.
 
-The judge is Claude. RAGAS defaults to OpenAI and will quietly use it for
-anything it can, which would mean a second key and a second bill; both metrics
-below were chosen partly because they need only an LLM. The obvious relevance
-metric, AnswerRelevancy, needs an embeddings model as well - and Anthropic
-does not sell one, so it would have pulled OpenAI back in through the side
-door no matter what the judge was set to.
+The judge is whichever provider RAG_PROVIDER names - the model it runs comes
+from pipeline.rag.providers.spec_for, the same lookup the answering chain
+uses. RAGAS defaults to OpenAI and will quietly use it for anything it can,
+which would mean a second key and a second bill; both metrics below were
+chosen partly because they need only an LLM, regardless of which provider
+supplies it.
+
+The judge does not, however, build its model through
+pipeline.rag.providers.build_chat_model the way the answering chain does.
+That function returns a LangChain chat model, and this project's ragas
+version (0.4.3) only accepts that shape for metrics it has since deprecated.
+The two metrics used here - ragas.metrics.collections.Faithfulness and
+RubricsScoreWithoutReference - are the current, non-deprecated ones, and they
+require a modern InstructorLLM wrapping a *raw* provider SDK client
+(anthropic.AsyncAnthropic, google.genai.Client, openai.AsyncOpenAI), patched
+by the instructor library - confirmed live rather than assumed, see the
+task 4 report for the transcript of a LangChain model building without error
+and then failing at Faithfulness(llm=...) with "Collections metrics only
+support modern InstructorLLM".
+
+ragas.llms.llm_factory does this same patching, and was the first thing
+tried, but it routes Gemini through instructor.from_genai() without the
+use_async=True flag that provider needs (Anthropic and OpenAI don't need the
+flag - an Async* client is enough for instructor to detect on its own) - so a
+Gemini judge built through llm_factory silently comes back synchronous, and
+every metric's .score() (async-only under the hood) fails the same way as
+the LangChain shape did. Also confirmed live, also in the task 4 report.
+build_judge patches the client itself instead, picking the provider the same
+way providers.py does.
+
+Reaching OpenAI through a second door was the real risk this used to guard
+against with an Anthropic-only judge: RAGAS's usual relevance metric works by
+embedding the answer to compare it, and neither Anthropic nor Gemini sells an
+embeddings API in the same first-party way OpenAI's client offers here - so
+choosing that metric would pull the OpenAI client back in no matter what the
+judge is set to. Both metrics used here need only a language model, and a
+test asserts that by inspecting their signatures rather than by reading the
+setting.
 """
 
 import json
 import sys
 from datetime import datetime, timezone
 
-import anthropic
 import psycopg2
 from psycopg2.extras import execute_values
-from ragas.llms import llm_factory
 from ragas.metrics.collections import Faithfulness, RubricsScoreWithoutReference
 
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError, LoadError
 from pipeline.logger import get_logger
-
-JUDGE_MODEL = "claude-opus-5"
+from pipeline.rag import providers
 
 # - The judge writes a short structured verdict, not prose. This is a ceiling
 #   against a runaway response, not a target.
@@ -119,15 +148,70 @@ CREATE INDEX IF NOT EXISTS idx_rag_evaluations_question
 """
 
 
+def _instructor_client(config: Config, spec: providers.ProviderSpec):
+    """A patched, async-capable instructor client for the configured provider.
+
+    Not providers.build_chat_model: that returns a LangChain chat model, and
+    instructor patches a raw provider SDK client (anthropic.AsyncAnthropic,
+    google.genai.Client, openai.AsyncOpenAI) - a LangChain object does not
+    have the shape it patches.
+
+    Not ragas.llms.llm_factory either, though that was the first attempt: it
+    delegates this same patching to
+    ragas.llms.adapters.instructor._get_instructor_client, which for Anthropic
+    and OpenAI is fine - passing an Async* client is enough for instructor to
+    auto-detect and return an AsyncInstructor - but for Gemini it calls
+    instructor.from_genai(client) with no use_async flag, which defaults to
+    False and returns a synchronous client regardless of what client object
+    was passed in. ragas.metrics.collections' async-only .ascore() path (used
+    by every metric's .score()) then raises "Cannot use agenerate() with a
+    synchronous client" on every call - confirmed live against a real
+    GOOGLE_API_KEY, see the task 4 report for the transcript. Patching here
+    directly, with use_async=True added for Gemini, is the one-line difference
+    that makes the default provider actually work; done for all three so the
+    construction path is the same regardless of which one is configured.
+    """
+    import instructor
+
+    if spec.name == "anthropic":
+        if not config.anthropic_api_key:
+            raise ConfigError("ANTHROPIC_API_KEY is required for RAG_PROVIDER=anthropic")
+        from anthropic import AsyncAnthropic
+
+        return instructor.from_anthropic(AsyncAnthropic(api_key=config.anthropic_api_key))
+
+    if spec.name == "gemini":
+        if not config.google_api_key:
+            raise ConfigError("GOOGLE_API_KEY is required for RAG_PROVIDER=gemini")
+        from google import genai
+
+        return instructor.from_genai(
+            genai.Client(api_key=config.google_api_key), use_async=True
+        )
+
+    if spec.name == "openai":
+        if not config.openai_api_key:
+            raise ConfigError("OPENAI_API_KEY is required for RAG_PROVIDER=openai")
+        from openai import AsyncOpenAI
+
+        # - Mode.JSON, matching ragas's own adapter: OpenAI's tool-call mode
+        #   (the instructor default) returns empty objects for Dict-typed
+        #   fields in the response schema.
+        return instructor.from_openai(
+            AsyncOpenAI(api_key=config.openai_api_key), mode=instructor.Mode.JSON
+        )
+
+    raise ConfigError(f"no judge client builder for provider {spec.name!r}")  # pragma: no cover
+
+
 def build_judge(config: Config):
-    """The judge, on Claude, with no OpenAI anywhere in the path."""
-    if not config.anthropic_api_key:
-        raise ConfigError("ANTHROPIC_API_KEY is required to evaluate answers")
-    return llm_factory(
-        JUDGE_MODEL,
-        provider="anthropic",
-        client=anthropic.Anthropic(api_key=config.anthropic_api_key),
-        max_tokens=JUDGE_MAX_TOKENS,
+    """The judge, on whichever provider is configured, with no OpenAI anywhere in the path."""
+    from ragas.llms import InstructorLLM
+
+    spec = providers.spec_for(config)
+    client = _instructor_client(config, spec)
+    return InstructorLLM(
+        client=client, model=spec.model, provider=spec.name, max_tokens=JUDGE_MAX_TOKENS
     )
 
 
@@ -242,7 +326,7 @@ class Evaluator:
             "faithfulness": faithfulness,
             "relevance": scores.get("relevance"),
             "hallucination": hallucination,
-            "judge_model": JUDGE_MODEL,
+            "judge_model": providers.spec_for(self.config).model,
             "answer_model": answer.get("answer_model", "unknown"),
             "latency_ms": answer.get("latency_ms"),
             "evaluated_at": datetime.now(timezone.utc),

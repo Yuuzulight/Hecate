@@ -17,3 +17,13 @@ ragas==0.4.3
 #
 #   Remove this pin only after checking that `import ragas` still works.
 langchain-community==0.3.31
+
+# - Not brought in by ragas's own `instructor` dependency: that installs
+#   instructor's base package, not its `google-genai` extra. The Gemini judge
+#   (evaluation.py's build_judge, on the default RAG_PROVIDER) needs it -
+#   instructor.from_genai()'s structured-output path raises
+#   "ConfigurationError: The 'jsonref' package is required for Gemini
+#   structured output" without it. Found live, not from a changelog: a real
+#   Faithfulness.score() call against Gemini failed on this before it was
+#   added.
+jsonref==1.1.0
