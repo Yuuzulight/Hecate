@@ -62,6 +62,12 @@ def build_structured_model(config: Config, schema: type, max_tokens: int) -> obj
     than leaked to callers as a field they have to branch on themselves.
     chain.py calls this and never needs to know that method="json_schema"
     is an Anthropic-and-OpenAI thing, or why.
+
+    Always binds with include_raw=True, not exposed as a parameter: the
+    only caller is chain.py, and it needs the raw message alongside the
+    parsed object to read token usage off for _record_spend. Without it,
+    an answer still comes back fine and the spend panel just goes quiet -
+    the failure mode this project keeps a running list of.
     """
 ```
 
@@ -69,7 +75,7 @@ GPT-5.1's per-token prices are left as a placeholder in this spec deliberately -
 
 **Known risks, not yet resolved - both need an early smoke test before the rest of the chain is built around them:**
 
-- The Anthropic branch needs `method="json_schema"` specifically to dodge the `tool_choice`/thinking bug above. Whether Gemini's `with_structured_output` needs an equivalent workaround, or works with no `method` at all, is unknown - test one real Gemini call against the actual `GroundedAnswer` schema first.
+- The Anthropic branch needs `method="json_schema"` specifically to dodge the `tool_choice`/thinking bug above. Whether Gemini's `with_structured_output` needs an equivalent workaround, or works with no `method` at all, is unknown - test one real Gemini call against the actual `GroundedAnswer` schema first, and confirm `usage_metadata` actually comes back populated on the raw message, not just that the answer parses. `langchain-google-genai` is the newest of the three integrations here; a schema that parses but a usage field that doesn't populate would pass every other check and just quietly zero out the spend panel for Gemini-answered questions.
 - `ragas.metrics.collections.Faithfulness` and `RubricsScoreWithoutReference` (the API `evaluation.py` already uses) currently receive an LLM built by `ragas.llms.llm_factory(provider="anthropic", ...)`. Whether they accept a `ragas.llms.LangchainLLMWrapper`-wrapped model the same way, or expect something the collections API specifically requires, is unverified against ragas 0.4.3. Test one real `.score()` call with a wrapped model before rewiring the rest of `build_judge`.
 
 ## Changes to `chain.py`
