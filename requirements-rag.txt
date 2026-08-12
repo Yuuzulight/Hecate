@@ -17,6 +17,14 @@
 anthropic==0.121.0
 langchain==1.3.14
 langchain-anthropic==1.5.4
+# - The plan called for langchain-google-genai==2.1.5 and langchain-openai==
+#   0.3.3, but neither resolves against the pinned langchain-core==1.5.3
+#   (2.1.5 wants langchain-core<0.4.0; 0.3.3 wants the same) - bumped to the
+#   nearest versions that declare langchain-core<2.0.0,>=1.5.3, confirmed by
+#   checking each package's own requires_dist before pinning here, the same
+#   lesson requirements-eval.txt's langchain-community comment documents.
+langchain-google-genai==4.3.3
+langchain-openai==1.4.3
 langchain-core==1.5.3
 fastapi==0.141.1
 uvicorn==0.52.1
