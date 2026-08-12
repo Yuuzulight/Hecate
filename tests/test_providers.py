@@ -121,6 +121,18 @@ def test_effort_is_ignored_on_the_gemini_branch(env):
     providers.build_chat_model(Config(), max_tokens=100, effort="medium")  # must not raise
 
 
+def test_no_sampling_parameters_are_sent_on_the_anthropic_branch(env):
+    # - temperature, top_p and top_k are removed on this model and any of
+    #   them is a 400. The scope asked for temperature 0.2; the prompt
+    #   carries that intent instead (see chain.py's SYSTEM_PROMPT).
+    env.setenv("RAG_PROVIDER", "anthropic")
+    env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    model = providers.build_chat_model(Config(), max_tokens=100)
+    assert model.temperature is None
+    assert model.top_p is None
+    assert model.top_k is None
+
+
 # ---- build_structured_model: schema binding, include_raw, provider method
 
 

@@ -34,6 +34,29 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def fake_config(rag_provider="anthropic", anthropic_api_key="sk-ant-test"):
+    """A Config-like object good enough for build_model - never actually
+    reaches the network because the tests either stub the model or only
+    inspect what build_model constructs without calling .invoke()."""
+    from pipeline.config import Config
+
+    import os
+
+    old = {k: os.environ.get(k) for k in ("DB_PASSWORD", "RAG_PROVIDER", "ANTHROPIC_API_KEY")}
+    os.environ["DB_PASSWORD"] = "secret"
+    os.environ["RAG_PROVIDER"] = rag_provider
+    if anthropic_api_key:
+        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+    try:
+        return Config()
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 CONTEXT = {
     "coverage": {"repositories": 2013, "snapshot_days": 2, "history_to": "2026-08-09"},
     "sources": [{"source": "github", "with_stars": 508, "with_downloads": 0}],
@@ -81,7 +104,7 @@ def chain_returning(**kwargs):
     )
     retriever = StubRetriever(kwargs.pop("context", None))
     model = StubModel(answer)
-    return AnswerChain(retriever, model=model), model
+    return AnswerChain(retriever, fake_config(), model=model), model
 
 
 # ---- what the model is shown
@@ -214,7 +237,7 @@ def test_every_answer_carries_a_latency():
 def test_the_response_has_exactly_the_agreed_shape():
     chain, _ = chain_returning()
     result = chain.answer("what is growing")
-    assert set(result) == {"answer", "confidence", "sources", "latency_ms"}
+    assert set(result) == {"answer", "confidence", "sources", "latency_ms", "answer_model"}
     assert set(result["sources"]) == {"repository_ids", "blocks"}
 
 
@@ -263,13 +286,13 @@ def test_the_model_does_not_force_a_tool_call():
     #   it is not here - so the guard misses and the request would 400.
     from pipeline.rag.chain import build_model
 
-    assert "tool_choice" not in bound_model(build_model()).kwargs
+    assert "tool_choice" not in bound_model(build_model(fake_config())).kwargs
 
 
 def test_the_answer_schema_reaches_the_request():
     from pipeline.rag.chain import build_model
 
-    bound = bound_model(build_model()).kwargs
+    bound = bound_model(build_model(fake_config())).kwargs
     schema = bound["output_config"]["format"]["schema"]
     assert set(schema["properties"]) == {"answer", "confidence", "sources"}
 
@@ -277,22 +300,13 @@ def test_the_answer_schema_reaches_the_request():
 def test_effort_survives_the_structured_output_binding():
     # - Both settings write to output_config. If the bind replaced rather than
     #   merged, effort would vanish silently and only show up on the bill.
-    from pipeline.rag.chain import EFFORT, build_chat_model, build_model
+    from pipeline.rag.chain import EFFORT, build_model
 
-    assert bound_model(build_model()).kwargs["output_config"]["format"]
-    assert build_chat_model().output_config == {"effort": EFFORT}
+    assert bound_model(build_model(fake_config())).kwargs["output_config"]["format"]
+    from pipeline.rag import providers
 
-
-def test_no_sampling_parameters_are_sent():
-    # - temperature, top_p and top_k are removed on this model and any of them
-    #   is a 400. The scope asked for temperature 0.2; the prompt carries that
-    #   intent instead.
-    from pipeline.rag.chain import build_chat_model
-
-    model = build_chat_model()
-    assert model.temperature is None
-    assert model.top_p is None
-    assert model.top_k is None
+    bare = providers.build_chat_model(fake_config(), max_tokens=100, effort=EFFORT)
+    assert bare.output_config == {"effort": EFFORT}
 
 
 def test_the_raw_message_comes_back_so_spend_can_be_counted():
@@ -301,8 +315,9 @@ def test_the_raw_message_comes_back_so_spend_can_be_counted():
     #   graph that looks exactly like no spend.
     from pipeline.rag.chain import build_model
 
-    assert isinstance(build_model().first.steps__, dict)
-    assert "raw" in build_model().first.steps__
+    built = build_model(fake_config())
+    assert isinstance(built.first.steps__, dict)
+    assert "raw" in built.first.steps__
 
 
 # ---- counting what it cost
@@ -324,9 +339,10 @@ def counter_value(metric, **labels):
 
 def test_tokens_and_cost_are_counted_from_the_raw_message():
     from pipeline import metrics
-    from pipeline.rag.chain import PRICE_PER_MTOK_INPUT, PRICE_PER_MTOK_OUTPUT
+    from pipeline.rag import providers
 
     chain, _ = chain_returning()
+    spec = providers.spec_for(chain.config)
     before_in = counter_value(metrics.rag_tokens, kind="input")
     before_cost = counter_value(metrics.rag_cost)
 
@@ -338,7 +354,7 @@ def test_tokens_and_cost_are_counted_from_the_raw_message():
     })
 
     assert counter_value(metrics.rag_tokens, kind="input") - before_in == 12000
-    expected = 12000 / 1e6 * PRICE_PER_MTOK_INPUT + 400 / 1e6 * PRICE_PER_MTOK_OUTPUT
+    expected = 12000 / 1e6 * spec.price_per_mtok_input + 400 / 1e6 * spec.price_per_mtok_output
     assert counter_value(metrics.rag_cost) - before_cost == pytest.approx(expected)
 
 
