@@ -94,6 +94,7 @@ GPT-5.1's per-token prices are left as a placeholder in this spec deliberately -
 
 ## Changes to `evaluation.py`
 
+- The module docstring (lines 1-25) opens "The judge is Claude. RAGAS defaults to OpenAI and will quietly use it for anything it can..." and is almost certainly the source `ARCHITECTURE.md`'s `### Why the judge is Claude` section was written from. It needs rewriting alongside the functional changes below, not left behind as source-level prose describing behavior the code no longer has - the risk of forgetting it is higher than a separate doc file precisely because it looks like it's already "in the code" and easy to assume is still accurate.
 - `build_judge(config)` becomes `ragas.llms.LangchainLLMWrapper(providers.build_chat_model(config, max_tokens=JUDGE_MAX_TOKENS))` - the bare model, not the structured one, since the judge scores free-text answers rather than emitting `GroundedAnswer` itself. `effort` is deliberately not passed here, preserving the judge's existing unset-effort behavior exactly.
 - `JUDGE_MODEL` stops being a fixed module constant; `evaluate()` reads `providers.spec_for(config).model` fresh, so `rag_evaluations.judge_model` always reflects what actually judged that row rather than a name that could go stale if the provider changes between runs.
 
