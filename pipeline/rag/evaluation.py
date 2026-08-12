@@ -365,7 +365,6 @@ class Evaluator:
 
 def main() -> int:
     """Answer the fixed question set, score it, and write the scores down."""
-    from pipeline.rag.chain import MODEL as ANSWER_MODEL
     from pipeline.rag.chain import AnswerChain
     from pipeline.rag.questions import QUESTIONS
     from pipeline.rag.retriever import WarehouseRetriever
@@ -380,14 +379,13 @@ def main() -> int:
         evaluator.connect()
         evaluator.create_table()
 
-        chain = AnswerChain(retriever)
+        chain = AnswerChain(retriever, config)
         rows = []
         for question in QUESTIONS:
             # - The context the answer actually used, not a second retrieval of
             #   it. Asking again would score the answer against evidence it
             #   never saw if a snapshot landed mid-run.
             answer, context = chain.answer_and_context(question["question"])
-            answer["answer_model"] = ANSWER_MODEL
             rows.append(
                 evaluator.evaluate(
                     question["question"],

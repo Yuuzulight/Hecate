@@ -282,7 +282,7 @@ def main() -> int:
     retriever = WarehouseRetriever(config)
     retriever.connect()
 
-    app = build_app(config, chain=AnswerChain(retriever), retriever=retriever)
+    app = build_app(config, chain=AnswerChain(retriever, config), retriever=retriever)
     log.info(
         "rag api listening",
         extra={"context": {"port": PORT, "rag_enabled": config.rag_enabled}},

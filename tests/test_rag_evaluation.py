@@ -326,11 +326,11 @@ def test_a_run_where_every_metric_failed_does_not_exit_clean(monkeypatch, caplog
             pass
 
     class StubChain:
-        def __init__(self, retriever):
+        def __init__(self, retriever, config):
             pass
 
         def answer_and_context(self, question):
-            return {"answer": "something", "latency_ms": 1}, CONTEXT
+            return {"answer": "something", "latency_ms": 1, "answer_model": "stub"}, CONTEXT
 
     class StubEvaluator(Evaluator):
         def __init__(self, config):
