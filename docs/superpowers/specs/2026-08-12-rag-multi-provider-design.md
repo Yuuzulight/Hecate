@@ -19,7 +19,7 @@ Two approaches considered and set aside:
 - **Branching separately in each file.** Duplicates the provider list in two places, and the two files would drift on model names or pricing the first time either one changes without the other.
 - **A unifying library like LiteLLM.** The Anthropic wiring in `chain.py` already required tracking down a real bug - `with_structured_output`'s default method forces `tool_choice`, which the API rejects once thinking is on, and Claude Opus 5 has thinking on by default. Routing three providers through a new abstraction risks rediscovering that class of bug per-provider with less visibility into what is actually sent. Not worth it for three known providers with existing first-party LangChain integrations.
 
-**The judge stops using `ragas.llms.llm_factory(provider=...)`.** RAGAS's factory only natively knows a handful of providers. `ragas.llms.LangchainLLMWrapper` wraps *any* LangChain chat model, so the judge uses the exact same `providers.build_chat_model()` the answering chain does, instead of separate provider-specific judge wiring.
+**The judge stops using `ragas.llms.llm_factory(provider=...)`.** RAGAS's factory only natively knows a handful of providers. `ragas.llms.LangchainLLMWrapper` wraps *any* LangChain chat model, so the judge is built from `providers.build_chat_model()` - the same per-provider construction logic the answering chain's `build_structured_model()` calls internally, just without the schema binding the judge doesn't need - instead of separate provider-specific judge wiring.
 
 ## `pipeline/rag/providers.py`
 
@@ -30,13 +30,11 @@ class ProviderSpec:
     model: str
     price_per_mtok_input: float
     price_per_mtok_output: float   # 0.0 for gemini's free tier
-    structured_output_method: str | None   # "json_schema", or None to let the
-                                            # integration pick its own default
 
 SPECS = {
-    "gemini":    ProviderSpec("gemini", "gemini-2.5-flash", 0.0, 0.0, None),
-    "anthropic": ProviderSpec("anthropic", "claude-opus-5", 5.00, 25.00, "json_schema"),
-    "openai":    ProviderSpec("openai", "gpt-5.1", <real price>, <real price>, "json_schema"),
+    "gemini":    ProviderSpec("gemini", "gemini-2.5-flash", 0.0, 0.0),
+    "anthropic": ProviderSpec("anthropic", "claude-opus-5", 5.00, 25.00),
+    "openai":    ProviderSpec("openai", "gpt-5.1", <real price>, <real price>),
 }
 
 def spec_for(config: Config) -> ProviderSpec:
@@ -51,24 +49,39 @@ def build_chat_model(config: Config, max_tokens: int) -> object:
     constructor arguments (max_output_tokens vs max_tokens, an effort field
     that only Claude has) - a generic signature here would just be a worse
     version of three specific ones. Raises ConfigError naming the missing
-    key if the configured provider's key is not set.
+    key if the configured provider's key is not set. Used directly by the
+    judge, which needs a bare model to wrap rather than one already bound to
+    an answer schema.
+    """
+
+def build_structured_model(config: Config, schema: type, max_tokens: int) -> object:
+    """build_chat_model, already bound to a schema via with_structured_output.
+
+    Which `method` argument each provider needs - if any - is exactly the
+    kind of provider-specific knowledge that belongs in this module rather
+    than leaked to callers as a field they have to branch on themselves.
+    chain.py calls this and never needs to know that method="json_schema"
+    is an Anthropic-and-OpenAI thing, or why.
     """
 ```
 
 GPT-5.1's per-token prices are left as a placeholder in this spec deliberately - pulled from OpenAI's published pricing page at implementation time, the same way the existing Claude prices in `chain.py` are sourced from Anthropic's, rather than guessed here.
 
-**Known risk, not yet resolved:** the Anthropic branch needs `method="json_schema"` specifically to dodge the `tool_choice`/thinking bug above. Whether Gemini's `with_structured_output` has an equivalent landmine is unknown. The implementation plan should smoke-test one real Gemini call against the actual `GroundedAnswer` schema early, before the rest of the chain is built around it.
+**Known risks, not yet resolved - both need an early smoke test before the rest of the chain is built around them:**
+
+- The Anthropic branch needs `method="json_schema"` specifically to dodge the `tool_choice`/thinking bug above. Whether Gemini's `with_structured_output` needs an equivalent workaround, or works with no `method` at all, is unknown - test one real Gemini call against the actual `GroundedAnswer` schema first.
+- `ragas.metrics.collections.Faithfulness` and `RubricsScoreWithoutReference` (the API `evaluation.py` already uses) currently receive an LLM built by `ragas.llms.llm_factory(provider="anthropic", ...)`. Whether they accept a `ragas.llms.LangchainLLMWrapper`-wrapped model the same way, or expect something the collections API specifically requires, is unverified against ragas 0.4.3. Test one real `.score()` call with a wrapped model before rewiring the rest of `build_judge`.
 
 ## Changes to `chain.py`
 
 - `AnswerChain.__init__(self, retriever, config, model=None)` - `config` becomes required. It was never threaded through before because `ChatAnthropic` read `ANTHROPIC_API_KEY` from the environment on its own; provider selection means the chain now has to know which provider it is building.
-- `build_model(config)` calls `providers.build_chat_model(config, max_tokens=MAX_TOKENS)`, then `.with_structured_output(GroundedAnswer, include_raw=True, **({"method": spec.structured_output_method} if spec.structured_output_method else {}))`.
+- `build_model(config)` becomes `providers.build_structured_model(config, GroundedAnswer, MAX_TOKENS)` - the `with_structured_output` call and its provider-specific `method` argument move into `providers.py` entirely, so `chain.py` no longer needs to know which providers need which method.
 - The chain carries `self.model_name = providers.spec_for(config).model` and includes it in its returned dict as `answer_model` - moves that field's source of truth into the chain itself, replacing `evaluation.py::main()`'s current `answer["answer_model"] = ANSWER_MODEL`, which reads a fixed import rather than what actually answered.
 - `_record_spend()` reads `spec.price_per_mtok_input` / `price_per_mtok_output` instead of the current module-level `PRICE_PER_MTOK_INPUT` / `PRICE_PER_MTOK_OUTPUT` constants, so a Gemini-answered question correctly logs $0 rather than Claude's price.
 
 ## Changes to `evaluation.py`
 
-- `build_judge(config)` becomes `ragas.llms.LangchainLLMWrapper(providers.build_chat_model(config, max_tokens=JUDGE_MAX_TOKENS))`.
+- `build_judge(config)` becomes `ragas.llms.LangchainLLMWrapper(providers.build_chat_model(config, max_tokens=JUDGE_MAX_TOKENS))` - the bare model, not the structured one, since the judge scores free-text answers rather than emitting `GroundedAnswer` itself.
 - `JUDGE_MODEL` stops being a fixed module constant; `evaluate()` reads `providers.spec_for(config).model` fresh, so `rag_evaluations.judge_model` always reflects what actually judged that row rather than a name that could go stale if the provider changes between runs.
 
 ## Call sites
@@ -84,6 +97,15 @@ GPT-5.1's per-token prices are left as a placeholder in this spec deliberately -
 
 Add `langchain-google-genai` and `langchain-openai` to `requirements-rag.txt`. Both are new: `embeddings.py` already talks to OpenAI, but through raw `requests` against the REST endpoint directly, not through LangChain - this is the first LangChain-OpenAI usage in the project. `requirements-eval.txt` inherits both via its existing `-r requirements-rag.txt`.
 
+## Rate limits
+
+Gemini's free tier caps requests per minute. `/ask` handles one question per call, so this is unlikely to matter there; `evaluation.py`'s run fires the fixed twelve-question set sequentially, which is naturally throttled by each call's own latency but could still land two calls close enough together to get a 429. Decision: rely on each LangChain integration's own default retry/backoff behavior (both `langchain-google-genai` and `langchain-anthropic` retry transient errors, including rate limits, by default) rather than add bespoke retry logic to `providers.py` - confirm each integration's actual default retry count during implementation rather than assume. This is a within-provider retry, distinct from the cross-provider fallback deferred below - a 429 that outlasts the built-in retries is still a hard failure, not a switch to a different provider.
+
+## Documentation and deployment updates
+
+- `ARCHITECTURE.md`'s existing `### Why the judge is Claude` section describes the judge as Claude specifically and explains why - both need rewriting once the judge is provider-selectable, or the doc actively contradicts the code the moment this ships.
+- `k8s/` needs updating alongside the code, not after: `rag-secret` gains a `google-api-key` key (optional, same pattern as the existing `anthropic-api-key`/`openai-api-key`), and `10-rag-api.yaml` wires `GOOGLE_API_KEY` and `RAG_PROVIDER` into the deployment's env. This project has hit "committed but not applied to the cluster" before (the embed CronJob's manifest landing in a commit that didn't `kubectl apply`) - the implementation plan should apply and verify this against a real cluster, not just commit the YAML.
+
 ## Selection behavior
 
 Manual only - `RAG_PROVIDER` picks the provider for the whole deployment, and a failed call fails rather than silently retrying on a different provider. This matches `RAG_ENABLED`'s existing rollback-switch pattern (a manual, visible flag rather than something that decides on its own), and keeps `answer_model`/`judge_model` an honest record of what was actually configured rather than something a fallback could have silently substituted mid-run.
@@ -95,5 +117,5 @@ Manual only - `RAG_PROVIDER` picks the provider for the whole deployment, and a 
 ## Testing notes
 
 - `build_chat_model` should be tested per-branch: each provider constructs the right client type and raises `ConfigError` naming the right missing key when its key is absent.
-- Existing tests that construct `AnswerChain(retriever)` with a stubbed model need updating for the new required `config` argument - a fake `Config` with `rag_provider` set is enough, since the stub model bypasses `build_model()` entirely.
+- Existing tests that construct `AnswerChain(retriever)` with a stubbed model need updating for the new required `config` argument - a fake `Config` with `rag_provider` set is enough, since the stub model bypasses `build_structured_model()` entirely.
 - The `test that asserts by constructor signature that neither RAGAS metric takes an embeddings parameter` (existing, per `claude-api-integration-traps`) stays relevant regardless of judge provider and does not need to change.
