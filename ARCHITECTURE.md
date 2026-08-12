@@ -157,7 +157,7 @@ This also forces the snapshot table. A mention count without a time dimension ca
 
 ## Answering questions
 
-Phase 2 puts a question-answering service over the warehouse: retrieve context, ask Claude, return an answer with the rows it was built from. Most of the decisions in it are about what the model is *not* allowed to do.
+Phase 2 puts a question-answering service over the warehouse: retrieve context, ask whichever LLM `RAG_PROVIDER` names, return an answer with the rows it was built from. Most of the decisions in it are about what the model is *not* allowed to do.
 
 Retrieval is structured SQL against the marts, not a similarity search. The questions this dataset gets asked — what is growing, what is being discussed, what is popular and going quiet — are aggregates, and no nearest-neighbour lookup surfaces an aggregate. Every block is bounded and already summarised, so a context that grows with the dataset cannot quietly start truncating.
 
@@ -187,13 +187,15 @@ A permanent cluster was considered and rejected: it reverses a one-day-old decis
 
 The service is deliberately not part of the daily window. That window collects, rebuilds the models and takes a backup; it has no use for an API, and starting one more thing lengthens a window whose whole point is being short.
 
-### Why the judge is Claude
+### Why the judge, and the chain, are provider-selectable
 
-RAGAS defaults to OpenAI and will use it for anything it can. Left alone that means a second key, a second bill, and quality scores that cost more than the answers they grade — so the judge is pointed at Claude explicitly.
+Both used to be hardcoded to Claude. Both were blocked on the same thing at once: Anthropic account credits, separate from and unfunded by the Claude subscription. Gemini's free tier removes that blocker at this project's scale, so `RAG_PROVIDER` (`gemini` default / `anthropic` / `openai`) picks the provider for both the answering chain and the judge, built through one shared module, `pipeline/rag/providers.py`.
 
-Pointing it there is the easy half. The harder half is that RAGAS reaches OpenAI through a second door: its usual relevance metric works by embedding the answer to compare it, and Anthropic sells no embeddings API, so choosing that metric would have pulled the OpenAI client back in with `provider="anthropic"` sitting in the config looking correct. Both metrics used here need only a language model, and a test asserts that by inspecting their signatures rather than by reading the setting.
+RAGAS defaults to OpenAI and will use it for anything it can. Left alone that means a second key, a second bill, and quality scores that cost more than the answers they grade - so the judge is always built from the same provider the chain answers with, never OpenAI regardless of what `RAG_PROVIDER` says.
 
-The two scores stay apart, because they mean different things. A low faithfulness score is an answer that invented something; a low relevance score is one that was merely unhelpful. Only the first is a hallucination, and reporting them as a single quality number loses the only distinction worth acting on. A metric that could not run at all is stored as null rather than zero — an unreachable judge is an outage, and a zero would be indistinguishable from a confident lie in every average taken afterwards.
+Pointing it there is the easy half. The harder half is that RAGAS reaches OpenAI through a second door: its usual relevance metric works by embedding the answer to compare it, and neither Anthropic nor Gemini sells an embeddings API the same way - so choosing that metric would have pulled the OpenAI client back in regardless of which provider is configured. Both metrics used here need only a language model, and a test asserts that by inspecting their signatures rather than by reading the setting.
+
+The two scores stay apart, because they mean different things. A low faithfulness score is an answer that invented something; a low relevance score is one that was merely unhelpful. Only the first is a hallucination, and reporting them as a single quality number loses the only distinction worth acting on. A metric that could not run at all is stored as null rather than zero - an unreachable judge is an outage, and a zero would be indistinguishable from a confident lie in every average taken afterwards.
 
 ### The switch
 

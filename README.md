@@ -241,7 +241,7 @@ python -m pipeline.rag.api      # serves on http://localhost:8001
 
 Then open `http://localhost:8001` and type a question. You'll get an answer, how confident the model was, the repositories it drew on as links you can follow, and how long it took.
 
-**It needs an Anthropic API key.** Put `ANTHROPIC_API_KEY=...` in your `.env`. Without one the service still starts and `/trending` still works, but asking a question returns an error saying what's missing. Answering is billed per question — a few cents a day at any sane rate of asking, and there's an alert if it isn't.
+**It needs an API key for whichever provider is configured.** `RAG_PROVIDER` defaults to `gemini` — put `GOOGLE_API_KEY=...` in your `.env`, free via Google AI Studio. Set `RAG_PROVIDER=anthropic` or `RAG_PROVIDER=openai` and the matching key instead if you'd rather use one of those. Without a key for whichever provider is configured, the service still starts and `/trending` still works, but asking a question returns an error saying what's missing. Gemini's free tier costs nothing at this project's scale; Anthropic and OpenAI are billed per question — a few cents a day at any sane rate of asking, and there's an alert if it isn't.
 
 Three endpoints:
 
@@ -265,7 +265,7 @@ Two conventions. Nulls are meaningful: if a source doesn't report a field it sta
 
 ## Status
 
-Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups. The question-answering service on top of it is built and deployed but has not yet been run against a live model — it needs a key, and everything about it that can be checked without one has been.
+Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups. The question-answering service on top of it is built and deployed, provider-selectable between Gemini, Anthropic, and OpenAI.
 
 Momentum needs about a week of snapshot history before it means much — with fewer days than that, the growth windows are correctly null and the ranking leans on attention alone. That resolves itself rather than needing a change.
 
@@ -273,7 +273,7 @@ Known limits are listed at the end of `ARCHITECTURE.md`. The honest short versio
 
 ## Stack
 
-Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana, Redis, FastAPI, LangChain, Claude.
+Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana, Redis, FastAPI, LangChain, Gemini/Claude/GPT (provider-selectable).
 
 ## Licence
 
