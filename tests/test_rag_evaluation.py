@@ -212,6 +212,44 @@ def test_both_metrics_see_the_question_the_answer_and_the_context():
         assert len(call["retrieved_contexts"]) == 2
 
 
+class SlowStubMetric:
+    """Sleeps before returning, to prove the two metrics run concurrently
+    rather than one after the other - the two real LLM round trips this
+    stands in for are exactly why it matters."""
+
+    SLEEP_SECONDS = 0.2
+
+    def __init__(self, value):
+        self.value = value
+
+    def score(self, **kwargs):
+        import time
+
+        time.sleep(self.SLEEP_SECONDS)
+        return type("Result", (), {"value": self.value})()
+
+
+def test_the_two_metrics_run_concurrently_not_sequentially():
+    import time
+
+    metrics = {
+        "faithfulness": SlowStubMetric(0.9),
+        "relevance": SlowStubMetric(0.8),
+    }
+    ev = Evaluator(Config(), metrics=metrics)
+
+    started = time.perf_counter()
+    scores = ev.score("what grew", ANSWER["answer"], CONTEXT)
+    elapsed = time.perf_counter() - started
+
+    assert scores == {"faithfulness": 0.9, "relevance": 0.8}
+    # - Run sequentially this would take >= 2 * SLEEP_SECONDS. A generous
+    #   margin over one sleep rather than a tight one, so this isn't flaky
+    #   under a loaded CI runner - the two-sleeps-worth sequential case
+    #   would still fail it by a wide margin.
+    assert elapsed < SlowStubMetric.SLEEP_SECONDS * 1.5
+
+
 def test_the_row_carries_both_models():
     ev = evaluator_with()
     row = ev.evaluate("what grew", ANSWER, CONTEXT)

@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError
+from pipeline.rag.provider_names import PROVIDER_NAMES
 
 
 @dataclass(frozen=True)
@@ -44,8 +45,8 @@ SPECS = {
     # - $0.00/$0.00 means hecate_rag_cost_usd_total never increments while
     #   running on the default provider, so RagSpendHigh (severity: critical,
     #   see k8s/monitoring/alert-rules.yaml) cannot fire regardless of usage
-    #   under RAG_PROVIDER=gemini. hecate_rag_tokens_total is the signal that
-    #   actually moves and is what to watch instead on Gemini.
+    #   under RAG_PROVIDER=gemini. RagTokensHigh, in that same file, is the
+    #   replacement alert keyed on hecate_rag_tokens_total instead.
     "gemini": ProviderSpec("gemini", "gemini-3.5-flash", 0.0, 0.0),
     "anthropic": ProviderSpec("anthropic", "claude-opus-5", 5.00, 25.00),
     # - PLACEHOLDER pricing, not verified against OpenAI's real pricing page
@@ -59,6 +60,35 @@ def spec_for(config: Config) -> ProviderSpec:
     # config.rag_provider is already validated at Config construction time,
     # so this is a lookup, not a second validation.
     return SPECS[config.rag_provider]
+
+
+# - Which Config attribute and env var name each provider's key lives under.
+#   The single thing require_key needs to do its job for all three, so the
+#   check-and-raise itself exists exactly once rather than once per branch
+#   per caller (this module's build_chat_model and evaluation.py's
+#   _instructor_client both need it, and used to each spell it out inline,
+#   with the same message duplicated in both places).
+_KEY_ATTR = {
+    "gemini": ("google_api_key", "GOOGLE_API_KEY"),
+    "anthropic": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
+    "openai": ("openai_api_key", "OPENAI_API_KEY"),
+}
+
+
+def require_key(config: Config, spec: ProviderSpec) -> str:
+    """The configured provider's API key, or a ConfigError naming what's missing.
+
+    Client *construction* still differs genuinely per provider - different
+    SDKs, different constructor shapes - and stays three branches for that
+    reason. This is the one piece of each branch that was pure duplication:
+    the same "is it set, if not raise naming it" check, byte-identical
+    message and all, existing twice per provider across two files.
+    """
+    attr, env_name = _KEY_ATTR[spec.name]
+    value = getattr(config, attr)
+    if not value:
+        raise ConfigError(f"{env_name} is required for RAG_PROVIDER={spec.name}")
+    return value
 
 
 def build_chat_model(config: Config, max_tokens: int, effort: str | None = None) -> object:
@@ -103,41 +133,36 @@ def build_chat_model(config: Config, max_tokens: int, effort: str | None = None)
     None of the three needed an explicit max_retries passed at construction.
     """
     spec = spec_for(config)
+    key = require_key(config, spec)
 
     if spec.name == "gemini":
-        if not config.google_api_key:
-            raise ConfigError("GOOGLE_API_KEY is required for RAG_PROVIDER=gemini")
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         return ChatGoogleGenerativeAI(
             model=spec.model,
-            google_api_key=config.google_api_key,
+            google_api_key=key,
             max_output_tokens=max_tokens,
         )
 
     if spec.name == "anthropic":
-        if not config.anthropic_api_key:
-            raise ConfigError("ANTHROPIC_API_KEY is required for RAG_PROVIDER=anthropic")
         from langchain_anthropic import ChatAnthropic
 
         # - api_key passed explicitly, not left to ChatAnthropic's own
         #   ANTHROPIC_API_KEY env lookup: that lookup has no .strip(), so a
         #   value with trailing whitespace (routine for secrets mounted from
         #   files, e.g. a k8s secret volume) would authenticate with a
-        #   different byte string than the one just validated as present.
-        kwargs = {"model": spec.model, "max_tokens": max_tokens, "api_key": config.anthropic_api_key}
+        #   different byte string than the one require_key just validated.
+        kwargs = {"model": spec.model, "max_tokens": max_tokens, "api_key": key}
         if effort is not None:
             kwargs["output_config"] = {"effort": effort}
         return ChatAnthropic(**kwargs)
 
     if spec.name == "openai":
-        if not config.openai_api_key:
-            raise ConfigError("OPENAI_API_KEY is required for RAG_PROVIDER=openai")
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
             model=spec.model,
-            api_key=config.openai_api_key,
+            api_key=key,
             max_completion_tokens=max_tokens,
         )
 

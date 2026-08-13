@@ -262,62 +262,34 @@ def test_an_empty_context_cites_nothing_rather_than_failing():
 
 # ---- how the model is wired, which is the part a stub cannot show
 #
-# These build the real ChatAnthropic. It constructs without an API key and
-# nothing is sent, so they run in CI - and they catch the one failure that
-# would otherwise only appear on the first live question.
+# build_model is a one-line pass-through to providers.build_structured_model
+# (tests/test_providers.py owns the actual LangChain wiring: tool_choice,
+# include_raw, effort, schema properties reaching the request - all of it
+# against build_structured_model directly, not re-derived here per-schema).
+# What is chain.py's own to prove is that build_model calls it with the right
+# arguments - GroundedAnswer, MAX_TOKENS, EFFORT - which a spy shows more
+# directly than walking the LangChain internals a second time would.
 
 
-def bound_model(structured):
-    """The bound ChatAnthropic inside whatever LangChain wrapped it in.
+def test_build_model_delegates_to_providers_with_the_right_arguments(monkeypatch):
+    from pipeline.rag import chain as chain_module
+    from pipeline.rag.chain import EFFORT, MAX_TOKENS, build_model
 
-    include_raw puts the model behind a RunnableParallel, so reaching it is a
-    step deeper than it was. Kept in one place so a LangChain version bump
-    breaks one helper rather than four tests.
-    """
-    first = structured.first
-    steps = getattr(first, "steps__", None) or getattr(first, "steps", None)
-    return steps["raw"] if steps else first
+    calls = []
 
+    def fake_build_structured_model(config, schema, max_tokens, effort=None):
+        calls.append((config, schema, max_tokens, effort))
+        return "the-built-model"
 
-def test_the_model_does_not_force_a_tool_call():
-    # - The forced-tool path is rejected by the API whenever thinking is on,
-    #   and thinking is on by default on this model. langchain guards against
-    #   the combination, but only when its own `thinking` field is set, which
-    #   it is not here - so the guard misses and the request would 400.
-    from pipeline.rag.chain import build_model
+    monkeypatch.setattr(
+        chain_module.providers, "build_structured_model", fake_build_structured_model
+    )
 
-    assert "tool_choice" not in bound_model(build_model(fake_config())).kwargs
+    config = fake_config()
+    result = build_model(config)
 
-
-def test_the_answer_schema_reaches_the_request():
-    from pipeline.rag.chain import build_model
-
-    bound = bound_model(build_model(fake_config())).kwargs
-    schema = bound["output_config"]["format"]["schema"]
-    assert set(schema["properties"]) == {"answer", "confidence", "sources"}
-
-
-def test_effort_survives_the_structured_output_binding():
-    # - Both settings write to output_config. If the bind replaced rather than
-    #   merged, effort would vanish silently and only show up on the bill.
-    from pipeline.rag.chain import EFFORT, build_model
-
-    assert bound_model(build_model(fake_config())).kwargs["output_config"]["format"]
-    from pipeline.rag import providers
-
-    bare = providers.build_chat_model(fake_config(), max_tokens=100, effort=EFFORT)
-    assert bare.output_config == {"effort": EFFORT}
-
-
-def test_the_raw_message_comes_back_so_spend_can_be_counted():
-    # - Without include_raw the parsed object arrives alone and the token
-    #   counts are gone, which would leave the spend panel drawing an empty
-    #   graph that looks exactly like no spend.
-    from pipeline.rag.chain import build_model
-
-    built = build_model(fake_config())
-    assert isinstance(built.first.steps__, dict)
-    assert "raw" in built.first.steps__
+    assert result == "the-built-model"
+    assert calls == [(config, GroundedAnswer, MAX_TOKENS, EFFORT)]
 
 
 # ---- counting what it cost

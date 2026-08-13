@@ -58,6 +58,7 @@ setting.
 
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import psycopg2
@@ -173,33 +174,30 @@ def _instructor_client(config: Config, spec: providers.ProviderSpec):
     """
     import instructor
 
+    # - The key-presence check itself (is it set, if not raise naming it) is
+    #   the one piece of this that used to be duplicated verbatim against
+    #   providers.build_chat_model's own three branches - same message, two
+    #   files. require_key is that check, shared; client construction still
+    #   differs genuinely per provider and stays three branches for that.
+    key = providers.require_key(config, spec)
+
     if spec.name == "anthropic":
-        if not config.anthropic_api_key:
-            raise ConfigError("ANTHROPIC_API_KEY is required for RAG_PROVIDER=anthropic")
         from anthropic import AsyncAnthropic
 
-        return instructor.from_anthropic(AsyncAnthropic(api_key=config.anthropic_api_key))
+        return instructor.from_anthropic(AsyncAnthropic(api_key=key))
 
     if spec.name == "gemini":
-        if not config.google_api_key:
-            raise ConfigError("GOOGLE_API_KEY is required for RAG_PROVIDER=gemini")
         from google import genai
 
-        return instructor.from_genai(
-            genai.Client(api_key=config.google_api_key), use_async=True
-        )
+        return instructor.from_genai(genai.Client(api_key=key), use_async=True)
 
     if spec.name == "openai":
-        if not config.openai_api_key:
-            raise ConfigError("OPENAI_API_KEY is required for RAG_PROVIDER=openai")
         from openai import AsyncOpenAI
 
         # - Mode.JSON, matching ragas's own adapter: OpenAI's tool-call mode
         #   (the instructor default) returns empty objects for Dict-typed
         #   fields in the response schema.
-        return instructor.from_openai(
-            AsyncOpenAI(api_key=config.openai_api_key), mode=instructor.Mode.JSON
-        )
+        return instructor.from_openai(AsyncOpenAI(api_key=key), mode=instructor.Mode.JSON)
 
     raise ConfigError(f"no judge client builder for provider {spec.name!r}")  # pragma: no cover
 
@@ -285,37 +283,55 @@ class Evaluator:
             cur.execute(CREATE_TABLE)
         self.conn.commit()
 
-    def score(self, question: str, answer: str, context: dict) -> dict:
-        """Both metrics, with a failed one recorded as unknown rather than zero.
+    def _score_one(self, name: str, metric, question: str, answer: str, passages: list[str]):
+        """One metric's score, or None with a warning logged.
 
         A metric that could not run is an outage, not a bad answer. Writing a
         zero would be indistinguishable from a hallucination in every average
         drawn from this table afterwards.
         """
+        try:
+            # - Both take the same three arguments, which is not an
+            #   accident: metrics needing anything more than the question,
+            #   the answer and the context were ruled out for dragging an
+            #   embeddings model in with them.
+            result = metric.score(
+                user_input=question, response=answer, retrieved_contexts=passages
+            )
+            return float(result.value)
+        except Exception as exc:
+            # - Broad on purpose, same reasoning as the extractors: one
+            #   metric failing should not cost the other one's score, and
+            #   the judge is a network call to somebody else's service.
+            self.log.warning(
+                "metric failed",
+                extra={"context": {"metric": name, "error": str(exc)}},
+            )
+            return None
+
+    def score(self, question: str, answer: str, context: dict) -> dict:
+        """Both metrics, run concurrently.
+
+        metric.score() is ragas's own sync wrapper - it opens and closes its
+        own event loop per call (asyncio.run(self.ascore(...))) and refuses
+        outright if one is already running, so this can't be a plain
+        asyncio.gather over the two calls without making this whole method
+        (and its callers, up through main()'s per-question loop) async for a
+        benefit that stays local to this one function. A thread each does
+        the same job with no such change: each thread gets its own event
+        loop, faithfulness and relevance are otherwise independent - neither
+        reads the other's result - and the two real LLM round trips this
+        makes are what evaluate() actually waits on, so running them
+        concurrently roughly halves it rather than shaving something minor.
+        """
         passages = context_passages(context)
-        scores: dict[str, float | None] = {}
 
-        for name, metric in self.metrics.items():
-            try:
-                # - Both take the same three arguments, which is not an
-                #   accident: metrics needing anything more than the question,
-                #   the answer and the context were ruled out for dragging an
-                #   embeddings model in with them.
-                result = metric.score(
-                    user_input=question, response=answer, retrieved_contexts=passages
-                )
-                scores[name] = float(result.value)
-            except Exception as exc:
-                # - Broad on purpose, same reasoning as the extractors: one
-                #   metric failing should not cost the other one's score, and
-                #   the judge is a network call to somebody else's service.
-                self.log.warning(
-                    "metric failed",
-                    extra={"context": {"metric": name, "error": str(exc)}},
-                )
-                scores[name] = None
-
-        return scores
+        with ThreadPoolExecutor(max_workers=len(self.metrics)) as pool:
+            futures = {
+                name: pool.submit(self._score_one, name, metric, question, answer, passages)
+                for name, metric in self.metrics.items()
+            }
+            return {name: future.result() for name, future in futures.items()}
 
     def evaluate(self, question: str, answer: dict, context: dict, question_id=None) -> dict:
         """Score one answered question and return the row that would be stored."""

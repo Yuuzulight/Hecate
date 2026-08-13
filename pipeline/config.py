@@ -11,6 +11,7 @@ import os
 from dotenv import load_dotenv
 
 from pipeline.exceptions import ConfigError
+from pipeline.rag.provider_names import PROVIDER_NAMES
 
 load_dotenv()
 
@@ -98,9 +99,9 @@ class Config:
         #   account doesn't have. Validated here rather than left to fail on
         #   first use, matching how _int() already validates other settings.
         self.rag_provider = _optional("RAG_PROVIDER", "gemini").lower()
-        if self.rag_provider not in ("gemini", "anthropic", "openai"):
+        if self.rag_provider not in PROVIDER_NAMES:
             raise ConfigError(
-                f"RAG_PROVIDER must be one of gemini, anthropic, openai - got {self.rag_provider!r}"
+                f"RAG_PROVIDER must be one of {', '.join(PROVIDER_NAMES)} - got {self.rag_provider!r}"
             )
 
         # - A rollback switch, so unlike NAME_MATCHING it defaults on: you set

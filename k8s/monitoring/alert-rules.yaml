@@ -108,3 +108,28 @@ data:
                 asking questions, so either something is asking far more often
                 than a person would or a caller is retrying in a loop. Setting
                 RAG_ENABLED=0 stops it without a rebuild.
+
+          # - RagSpendHigh's replacement on the free default. A rough estimate,
+          #   the same way the $3 figure started as a guess and got revised
+          #   once real numbers existed (see above) - a typical question runs a
+          #   few thousand tokens each way, and a full twelve-question
+          #   evaluation run (each answered once, judged twice, every judgement
+          #   re-sending the whole retrieved context) is the single largest
+          #   legitimate consumer of tokens this system has. A million tokens
+          #   in a day is well beyond an evaluation run plus a generous day of
+          #   asking, and squarely in "something is looping" territory. Revisit
+          #   once there is real Gemini usage data to check it against, the
+          #   same way $1 turned out wrong for RagSpendHigh.
+          - alert: RagTokensHigh
+            expr: increase(hecate_rag_tokens_total[24h]) > 1000000
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Answering questions has used over a million tokens in 24h"
+              description: >-
+                hecate_rag_cost_usd_total stays at zero on the free default
+                provider, so RagSpendHigh cannot see this - token volume is
+                what actually reflects usage there. Either something is asking
+                far more often than a person would or a caller is retrying in
+                a loop. Setting RAG_ENABLED=0 stops it without a rebuild.

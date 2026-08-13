@@ -10,6 +10,7 @@ import pytest
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError
 from pipeline.rag import providers
+from pipeline.rag.provider_names import PROVIDER_NAMES
 
 
 @pytest.fixture
@@ -45,6 +46,48 @@ def test_spec_for_openai(env):
     spec = providers.spec_for(Config())
     assert spec.name == "openai"
     assert spec.model == "gpt-5.1"
+
+
+# ---- the provider name set stays in sync across every place it's declared
+#
+# PROVIDER_NAMES is the single source of truth; SPECS, _STRUCTURED_OUTPUT_METHOD
+# and _KEY_ATTR are each written by hand rather than derived from it (they
+# carry per-provider data PROVIDER_NAMES doesn't), so nothing stops one of
+# them drifting the day a fourth provider is added except a test that
+# actually compares the key sets.
+
+
+def test_specs_keys_match_provider_names():
+    assert set(providers.SPECS) == set(PROVIDER_NAMES)
+
+
+def test_structured_output_method_keys_match_provider_names():
+    assert set(providers._STRUCTURED_OUTPUT_METHOD) == set(PROVIDER_NAMES)
+
+
+def test_key_attr_keys_match_provider_names():
+    assert set(providers._KEY_ATTR) == set(PROVIDER_NAMES)
+
+
+# ---- require_key: the check shared by build_chat_model and evaluation.py
+
+
+def test_require_key_returns_the_configured_value(env):
+    env.setenv("RAG_PROVIDER", "anthropic")
+    env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    config = Config()
+    assert providers.require_key(config, providers.spec_for(config)) == "sk-ant-test"
+
+
+@pytest.mark.parametrize(
+    "provider, env_name",
+    [("gemini", "GOOGLE_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY")],
+)
+def test_require_key_raises_naming_the_missing_one(env, provider, env_name):
+    env.setenv("RAG_PROVIDER", provider)
+    config = Config()
+    with pytest.raises(ConfigError, match=f"{env_name} is required for RAG_PROVIDER={provider}"):
+        providers.require_key(config, providers.spec_for(config))
 
 
 # ---- build_chat_model: the right client type, or a clear error
@@ -184,3 +227,45 @@ def test_build_structured_model_uses_json_schema_on_anthropic(env):
     #   chain.py - this proves the binding actually used it rather than
     #   falling back to the default method that would 400 on a live call.
     assert "tool_choice" not in raw.kwargs
+
+
+def test_build_structured_model_schema_properties_reach_the_request(env):
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        headline: str
+        certainty: str
+
+    env.setenv("RAG_PROVIDER", "anthropic")
+    env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    bound = providers.build_structured_model(Config(), Answer, max_tokens=100)
+    steps = getattr(bound.first, "steps__", None) or getattr(bound.first, "steps", None)
+    raw = steps["raw"] if steps else bound.first
+    # - Whatever schema a caller passes in has to be the one that actually
+    #   reaches the request, not just a schema - a binding that silently
+    #   dropped or substituted fields would still "work" by every other check
+    #   here and only fail once a real answer came back missing a property.
+    schema = raw.kwargs["output_config"]["format"]["schema"]
+    assert set(schema["properties"]) == {"headline", "certainty"}
+
+
+def test_build_structured_model_preserves_effort(env):
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        text: str
+
+    env.setenv("RAG_PROVIDER", "anthropic")
+    env.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    bound = providers.build_structured_model(Config(), Answer, max_tokens=100, effort="medium")
+    steps = getattr(bound.first, "steps__", None) or getattr(bound.first, "steps", None)
+    raw = steps["raw"] if steps else bound.first
+    # - effort lands on the model itself (set at construction, via
+    #   build_chat_model), while the schema binding is a separate bind-time
+    #   kwarg with_structured_output adds on top - two different places that
+    #   both have to survive. If the bind replaced the model's own
+    #   output_config field instead of layering a bind-time kwarg beside it,
+    #   effort would vanish silently here and only show up as a surprise on
+    #   the bill.
+    assert raw.bound.output_config == {"effort": "medium"}
+    assert raw.kwargs["output_config"]["format"]

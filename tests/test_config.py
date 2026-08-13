@@ -4,6 +4,7 @@ import pytest
 
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError
+from pipeline.rag.provider_names import PROVIDER_NAMES
 
 # - Config reads the process environment at construction, so each test sets up
 #   the variables it cares about and clears the rest.
@@ -11,7 +12,7 @@ ALL_VARS = [
     "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
     "GITHUB_TOKEN", "GITLAB_TOKEN", "NPM_REGISTRY", "PYPI_REGISTRY",
     "BATCH_SIZE", "RETRY_ATTEMPTS",
-    "GOOGLE_API_KEY", "RAG_PROVIDER",
+    "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "RAG_PROVIDER",
 ]
 
 
@@ -94,3 +95,13 @@ def test_an_unknown_rag_provider_is_an_error(env):
     env.setenv("RAG_PROVIDER", "chatgpt")
     with pytest.raises(ConfigError, match="RAG_PROVIDER"):
         Config()
+
+
+def test_rag_provider_validates_against_the_shared_name_tuple(env):
+    # - Config can't import pipeline.rag.providers (circular import), so its
+    #   validation is checked against PROVIDER_NAMES here directly rather
+    #   than against providers.SPECS - proving the two independent imports
+    #   of the same tuple actually agree on what's valid.
+    for name in PROVIDER_NAMES:
+        env.setenv("RAG_PROVIDER", name)
+        assert Config().rag_provider == name
