@@ -333,9 +333,23 @@ def test_neither_metric_takes_an_embeddings_model(monkeypatch):
     #   keeps them that way, independent of provider.
     monkeypatch.setenv("RAG_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    for metric in build_metrics(build_judge(Config())).values():
+    for metric in build_metrics(Config()).values():
         parameters = inspect.signature(type(metric).__init__).parameters
         assert "embeddings" not in parameters, f"{type(metric).__name__} would need embeddings"
+
+
+def test_the_two_metrics_do_not_share_a_judge_client(monkeypatch):
+    # - Evaluator.score() runs both metrics concurrently, each in its own
+    #   thread with its own event loop (see Evaluator.score's docstring). A
+    #   shared client means both threads driving the same httpx/httpcore
+    #   async connection pool, which httpcore documents as unsynchronized in
+    #   the async case. Two independent clients is what actually closes that
+    #   gap, so it's worth asserting directly rather than trusting that
+    #   build_metrics keeps doing it.
+    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    built = build_metrics(Config())
+    assert built["faithfulness"].llm.client is not built["relevance"].llm.client
 
 
 def test_the_relevance_rubric_rewards_a_correct_refusal():

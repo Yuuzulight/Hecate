@@ -220,17 +220,31 @@ def build_judge(config: Config):
     )
 
 
-def build_metrics(judge) -> dict:
-    """Faithfulness and relevance, both LLM-only.
+def build_metrics(config: Config) -> dict:
+    """Faithfulness and relevance, both LLM-only, each on its own client.
 
     Neither takes an embeddings model. That is the constraint that keeps the
     judge honest: RAGAS' usual relevance metric embeds the answer to compare
     it, and neither Anthropic nor Gemini sells an embeddings API the same
     first-party way OpenAI's client does.
+
+    Takes config and builds two independent judges rather than one shared
+    one, even though both would otherwise be identical: Evaluator.score()
+    runs the two metrics concurrently, each in its own thread with its own
+    asyncio.run() event loop, and a single client would mean both threads
+    driving the same httpx/httpcore async connection pool. httpcore's own
+    source documents that pool as unsynchronized in the async case
+    (AsyncThreadLock is a no-op there - it assumes single-loop, cooperative
+    concurrency only) with per-connection locks that bind lazily to whichever
+    event loop first touches them and persist across keep-alive reuse -
+    exactly the shape that lets a connection opened by one thread's loop get
+    handed to the other thread's still-live loop. Two clients means two
+    pools with nothing between them to race on, which is cheaper to reason
+    about than trying to prove the sharing is safe.
     """
     return {
-        "faithfulness": Faithfulness(llm=judge),
-        "relevance": RubricsScoreWithoutReference(llm=judge, rubrics=RELEVANCE_RUBRIC),
+        "faithfulness": Faithfulness(llm=build_judge(config)),
+        "relevance": RubricsScoreWithoutReference(llm=build_judge(config), rubrics=RELEVANCE_RUBRIC),
     }
 
 
@@ -258,7 +272,7 @@ class Evaluator:
         # - Built on first use rather than in __init__, so an Evaluator can be
         #   constructed to read scores back without needing a key to do it.
         if self._metrics is None:
-            self._metrics = build_metrics(build_judge(self.config))
+            self._metrics = build_metrics(self.config)
         return self._metrics
 
     def connect(self) -> None:
