@@ -267,9 +267,19 @@ def test_the_row_carries_both_models():
 # provider judges.
 
 
-def test_the_judge_is_wired_to_the_configured_provider(monkeypatch):
-    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+@pytest.mark.parametrize(
+    "provider, env_name, key, model, client_module_prefix",
+    [
+        ("anthropic", "ANTHROPIC_API_KEY", "sk-ant-test", "claude-opus-5", "anthropic"),
+        ("gemini", "GOOGLE_API_KEY", "test-key", "gemini-3.5-flash", "google"),
+        ("openai", "OPENAI_API_KEY", "sk-test", "gpt-5.1", "openai"),
+    ],
+)
+def test_the_judge_is_wired_to_the_configured_provider(
+    monkeypatch, provider, env_name, key, model, client_module_prefix
+):
+    monkeypatch.setenv("RAG_PROVIDER", provider)
+    monkeypatch.setenv(env_name, key)
     judge = build_judge(Config())
     # - The brief's original guess here was ragas.llms.LangchainLLMWrapper
     #   wrapping providers.build_chat_model's LangChain model, asserted via a
@@ -282,11 +292,11 @@ def test_the_judge_is_wired_to_the_configured_provider(monkeypatch):
     #   Gemini specifically (a sync/async mismatch; see evaluation.py's module
     #   docstring). It uses evaluation.py's own _instructor_client helper over
     #   a raw provider SDK client instead, which is what these assertions
-    #   check: the raw client underneath is Anthropic's, not some other
-    #   provider's, when RAG_PROVIDER says anthropic.
-    assert judge.provider == "anthropic"
-    assert judge.model == "claude-opus-5"
-    assert type(judge.client.client).__module__.startswith("anthropic")
+    #   check: the raw client underneath is the configured provider's own SDK,
+    #   not some other provider's leaking in.
+    assert judge.provider == provider
+    assert judge.model == model
+    assert type(judge.client.client).__module__.startswith(client_module_prefix)
 
 
 def test_the_judge_defaults_to_gemini_like_everything_else(monkeypatch):
@@ -294,8 +304,6 @@ def test_the_judge_defaults_to_gemini_like_everything_else(monkeypatch):
     monkeypatch.delenv("RAG_PROVIDER", raising=False)
     judge = build_judge(Config())
     assert judge.provider == "gemini"
-    assert judge.model == "gemini-3.5-flash"
-    assert type(judge.client.client).__module__.startswith("google")
 
 
 def test_no_key_is_a_clear_error_rather_than_a_silent_fallback(monkeypatch):

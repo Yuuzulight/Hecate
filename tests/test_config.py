@@ -33,6 +33,8 @@ def test_defaults_apply_when_nothing_is_set(env):
     assert config.batch_size == 100
     assert config.retry_attempts == 3
     assert config.github_token == ""
+    assert config.google_api_key == ""
+    assert config.rag_provider == "gemini"
 
 
 def test_environment_overrides_defaults(env):
@@ -77,16 +79,14 @@ def test_repr_hides_the_password(env):
     assert "hunter2" not in repr(Config())
 
 
-def test_google_api_key_defaults_to_blank(env):
-    assert Config().google_api_key == ""
-
-
-def test_rag_provider_defaults_to_gemini(env):
-    assert Config().rag_provider == "gemini"
-
-
-@pytest.mark.parametrize("value", ["anthropic", "openai", "gemini", "ANTHROPIC", "OpenAI"])
-def test_rag_provider_accepts_the_known_values_case_insensitively(env, value):
+@pytest.mark.parametrize("value", [*PROVIDER_NAMES, *(name.upper() for name in PROVIDER_NAMES)])
+def test_rag_provider_accepts_every_known_value_case_insensitively(env, value):
+    # - Parametrized directly off PROVIDER_NAMES rather than a separately
+    #   hardcoded list, so this doubles as proof Config's validation and
+    #   providers.py's SPECS actually agree on what's valid - Config can't
+    #   import pipeline.rag.providers (circular import), so the two are
+    #   independent imports of the same tuple, and this is what would catch
+    #   them drifting apart.
     env.setenv("RAG_PROVIDER", value)
     assert Config().rag_provider == value.lower()
 
@@ -95,13 +95,3 @@ def test_an_unknown_rag_provider_is_an_error(env):
     env.setenv("RAG_PROVIDER", "chatgpt")
     with pytest.raises(ConfigError, match="RAG_PROVIDER"):
         Config()
-
-
-def test_rag_provider_validates_against_the_shared_name_tuple(env):
-    # - Config can't import pipeline.rag.providers (circular import), so its
-    #   validation is checked against PROVIDER_NAMES here directly rather
-    #   than against providers.SPECS - proving the two independent imports
-    #   of the same tuple actually agree on what's valid.
-    for name in PROVIDER_NAMES:
-        env.setenv("RAG_PROVIDER", name)
-        assert Config().rag_provider == name
