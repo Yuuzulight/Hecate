@@ -65,6 +65,7 @@ import psycopg2
 from psycopg2.extras import execute_values
 from ragas.metrics.collections import Faithfulness, RubricsScoreWithoutReference
 
+from pipeline import metrics
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError, LoadError
 from pipeline.logger import get_logger
@@ -159,6 +160,52 @@ CREATE INDEX IF NOT EXISTS idx_rag_evaluations_question
 """
 
 
+def _judge_usage(provider: str, response) -> tuple[int, int]:
+    """(input_tokens, output_tokens) out of one judge call's raw response.
+
+    The same job _record_spend does for chain.py's LangChain envelope, for
+    the raw provider SDK objects instructor's completion:response hook hands
+    back here instead - confirmed against each SDK's own installed Usage
+    type, since every provider names and nests these fields differently:
+    Anthropic's Message.usage (input_tokens/output_tokens), OpenAI's
+    ChatCompletion.usage (prompt_tokens/completion_tokens), Gemini's
+    GenerateContentResponse.usage_metadata (prompt_token_count/
+    candidates_token_count, both Optional - hence the `or 0`).
+    """
+    if provider == "anthropic":
+        return response.usage.input_tokens, response.usage.output_tokens
+    if provider == "openai":
+        return response.usage.prompt_tokens, response.usage.completion_tokens
+    if provider == "gemini":
+        usage = response.usage_metadata
+        return usage.prompt_token_count or 0, usage.candidates_token_count or 0
+    raise ConfigError(f"no usage extractor for provider {provider!r}")  # pragma: no cover
+
+
+def _record_judge_spend(spec: providers.ProviderSpec, response) -> None:
+    """Tokens and approximate cost for one judge call.
+
+    Mirrors chain.py's _record_spend, and never fatal for the same reason: a
+    judge call that produced a real score is worth keeping even if the
+    accounting for it did not work - a shape instructor changes upstream, an
+    SDK response missing usage on some edge case. This has no include_raw
+    escape hatch to fall back on the way chain.py's LangChain path does, so
+    the try/except here is what stands in for it.
+    """
+    try:
+        sent, received = _judge_usage(spec.name, response)
+    except Exception:
+        return
+    if not (sent or received):
+        return
+    metrics.rag_tokens.labels(kind="input").inc(sent)
+    metrics.rag_tokens.labels(kind="output").inc(received)
+    metrics.rag_cost.inc(
+        sent / 1_000_000 * spec.price_per_mtok_input
+        + received / 1_000_000 * spec.price_per_mtok_output
+    )
+
+
 def _instructor_client(config: Config, spec: providers.ProviderSpec):
     """A patched, async-capable instructor client for the configured provider.
 
@@ -181,6 +228,14 @@ def _instructor_client(config: Config, spec: providers.ProviderSpec):
     directly, with use_async=True added for Gemini, is the one-line difference
     that makes the default provider actually work; done for all three so the
     construction path is the same regardless of which one is configured.
+
+    Also registers a completion:response hook that feeds token/cost metrics
+    (see _record_judge_spend) - confirmed live that this fires with the raw,
+    unparsed provider response, one call per real API attempt (including
+    retries instructor makes on a validation failure, which is correct: each
+    one is a real billed call). Without this, judge spend was invisible on
+    the dashboard even though every call was real and billed - only the
+    answering side's cost ever got tracked.
     """
     import instructor
 
@@ -194,22 +249,23 @@ def _instructor_client(config: Config, spec: providers.ProviderSpec):
     if spec.name == "anthropic":
         from anthropic import AsyncAnthropic
 
-        return instructor.from_anthropic(AsyncAnthropic(api_key=key))
-
-    if spec.name == "gemini":
+        client = instructor.from_anthropic(AsyncAnthropic(api_key=key))
+    elif spec.name == "gemini":
         from google import genai
 
-        return instructor.from_genai(genai.Client(api_key=key), use_async=True)
-
-    if spec.name == "openai":
+        client = instructor.from_genai(genai.Client(api_key=key), use_async=True)
+    elif spec.name == "openai":
         from openai import AsyncOpenAI
 
         # - Mode.JSON, matching ragas's own adapter: OpenAI's tool-call mode
         #   (the instructor default) returns empty objects for Dict-typed
         #   fields in the response schema.
-        return instructor.from_openai(AsyncOpenAI(api_key=key), mode=instructor.Mode.JSON)
+        client = instructor.from_openai(AsyncOpenAI(api_key=key), mode=instructor.Mode.JSON)
+    else:
+        raise ConfigError(f"no judge client builder for provider {spec.name!r}")  # pragma: no cover
 
-    raise ConfigError(f"no judge client builder for provider {spec.name!r}")  # pragma: no cover
+    client.on("completion:response", lambda response: _record_judge_spend(spec, response))
+    return client
 
 
 def build_judge(config: Config):

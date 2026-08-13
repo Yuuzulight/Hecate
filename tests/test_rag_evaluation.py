@@ -17,9 +17,10 @@ import os
 
 import pytest
 
+from pipeline import metrics
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError
-from pipeline.rag import evaluation
+from pipeline.rag import evaluation, providers
 from pipeline.rag.evaluation import (
     CREATE_TABLE,
     EVAL_COLUMNS,
@@ -376,6 +377,110 @@ def test_the_two_metrics_do_not_share_a_judge_client(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     built = build_metrics(Config())
     assert built["faithfulness"].llm.client is not built["relevance"].llm.client
+
+
+# ---- judge spend - real, billed calls, invisible on the dashboard until now
+#
+# Only the answering side's tokens/cost ever reached hecate_rag_tokens_total
+# and hecate_rag_cost_usd_total - every judge call (two per question, real
+# and billed the same as the answer) went untracked. instructor's
+# completion:response hook fires with the raw, unparsed provider response,
+# which is where each SDK's own usage lives - the shape differs per
+# provider, confirmed against each one's actually-installed Usage type.
+
+
+class FakeUsage:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class FakeResponse:
+    def __init__(self, usage=None, usage_metadata=None):
+        if usage is not None:
+            self.usage = usage
+        if usage_metadata is not None:
+            self.usage_metadata = usage_metadata
+
+
+def counter_value(metric, **labels):
+    m = metric.labels(**labels) if labels else metric
+    return m._value.get()
+
+
+@pytest.mark.parametrize(
+    "provider, response, expected",
+    [
+        ("anthropic", FakeResponse(usage=FakeUsage(input_tokens=1000, output_tokens=200)), (1000, 200)),
+        ("openai", FakeResponse(usage=FakeUsage(prompt_tokens=800, completion_tokens=150)), (800, 150)),
+        (
+            "gemini",
+            FakeResponse(usage_metadata=FakeUsage(prompt_token_count=500, candidates_token_count=90)),
+            (500, 90),
+        ),
+        (
+            # - Both fields are Optional on Gemini's own type - a response
+            #   that omits them should read as zero, not raise.
+            "gemini",
+            FakeResponse(usage_metadata=FakeUsage(prompt_token_count=None, candidates_token_count=None)),
+            (0, 0),
+        ),
+    ],
+)
+def test_judge_usage_reads_each_providers_own_shape(provider, response, expected):
+    assert evaluation._judge_usage(provider, response) == expected
+
+
+def test_record_judge_spend_increments_the_same_counters_the_answer_side_uses(monkeypatch):
+    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    spec = providers.spec_for(Config())
+    before_in = counter_value(metrics.rag_tokens, kind="input")
+    before_cost = counter_value(metrics.rag_cost)
+
+    response = FakeResponse(usage=FakeUsage(input_tokens=2000, output_tokens=300))
+    evaluation._record_judge_spend(spec, response)
+
+    assert counter_value(metrics.rag_tokens, kind="input") - before_in == 2000
+    expected = 2000 / 1_000_000 * spec.price_per_mtok_input + 300 / 1_000_000 * spec.price_per_mtok_output
+    assert counter_value(metrics.rag_cost) - before_cost == pytest.approx(expected)
+
+
+def test_record_judge_spend_skips_a_response_with_no_usage(monkeypatch):
+    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    spec = providers.spec_for(Config())
+    before_cost = counter_value(metrics.rag_cost)
+
+    evaluation._record_judge_spend(spec, response=object())
+
+    assert counter_value(metrics.rag_cost) == before_cost
+
+
+def test_record_judge_spend_skips_zero_usage(monkeypatch):
+    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    spec = providers.spec_for(Config())
+    before_cost = counter_value(metrics.rag_cost)
+
+    response = FakeResponse(usage=FakeUsage(input_tokens=0, output_tokens=0))
+    evaluation._record_judge_spend(spec, response)
+
+    assert counter_value(metrics.rag_cost) == before_cost
+
+
+@pytest.mark.parametrize(
+    "provider, env_name", [("anthropic", "ANTHROPIC_API_KEY"), ("gemini", "GOOGLE_API_KEY"), ("openai", "OPENAI_API_KEY")]
+)
+def test_the_judge_client_registers_the_spend_hook(monkeypatch, provider, env_name):
+    from instructor.core.hooks import HookName
+
+    monkeypatch.setenv("RAG_PROVIDER", provider)
+    monkeypatch.setenv(env_name, "test-key")
+    spec = providers.spec_for(Config())
+    client = evaluation._instructor_client(Config(), spec)
+
+    assert len(client.hooks._handlers[HookName.COMPLETION_RESPONSE]) == 1
 
 
 def test_the_relevance_rubric_rewards_a_correct_refusal():
