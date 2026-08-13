@@ -12,13 +12,12 @@ from fastapi.testclient import TestClient
 
 from pipeline import server as metrics_server
 from pipeline.config import Config
-from pipeline.exceptions import ConfigError, LoadError
+from pipeline.exceptions import LoadError
 from pipeline.rag.api import (
     LATENCY_TARGET_MS,
     PORT,
     RateLimiter,
     build_app,
-    build_chain,
     client_key,
 )
 
@@ -451,20 +450,13 @@ def test_the_service_does_not_take_the_metrics_port():
     assert PORT != metrics_server.PORT
 
 
-# ---- a chain that failed to build costs /ask, not the whole service
+# ---- a missing provider key costs /ask, not the whole service
 #
-# providers.build_chat_model raises ConfigError before the client is
-# constructed when the configured provider's key is missing. Left uncaught,
-# that used to take the whole process down before uvicorn.run() - /health and
-# /trending included, not just /ask. build_chain is what stands between them.
-
-
-class FakeLog:
-    def __init__(self):
-        self.errors = []
-
-    def error(self, message, extra=None):
-        self.errors.append((message, extra))
+# AnswerChain builds its model lazily (see tests/test_rag_chain.py for that
+# guarantee directly) - constructing it never raises, even with no key
+# configured, so main() can build the app unconditionally. This is the
+# end-to-end proof: the service actually stays up and /ask actually returns
+# a clear error, rather than the process never starting at all.
 
 
 def test_a_missing_provider_key_fails_the_request_not_the_process(monkeypatch):
@@ -472,45 +464,29 @@ def test_a_missing_provider_key_fails_the_request_not_the_process(monkeypatch):
     monkeypatch.setenv("RAG_PROVIDER", "gemini")
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     config = Config()
-    log = FakeLog()
 
     class StubRetriever:
+        def context_for(self, question, limit=10):
+            return {}
+
         def close(self):
             pass
 
-    chain = build_chain(StubRetriever(), config, log)
+    from pipeline.rag.chain import AnswerChain
 
-    # - The app still builds and /health works - it never touches
-    #   app.state.chain, so a broken chain doesn't stop it. (/trending is the
-    #   other endpoint that doesn't touch the chain; it's exercised
+    # - Construction itself must not raise - that's the whole guarantee.
+    chain = AnswerChain(StubRetriever(), config)
+
+    # - The app builds and /health works - it never touches app.state.chain,
+    #   so a chain with an unbuildable model doesn't stop it. (/trending is
+    #   the other endpoint that doesn't touch the chain; it's exercised
     #   elsewhere in this file with a retriever that actually implements it.)
     app = build_app(config, chain=chain, retriever=StubRetriever())
     client = TestClient(app)
     assert client.get("/health").status_code == 200
 
-    # - /ask surfaces the real ConfigError message rather than the process
-    #   never having started at all.
+    # - /ask is where the deferred ConfigError actually surfaces, with the
+    #   real message, rather than the process never having started at all.
     response = client.post("/ask", json={"question": "what is growing?"})
     assert response.status_code == 502
     assert "GOOGLE_API_KEY is required for RAG_PROVIDER=gemini" in response.json()["detail"]
-
-    # - Logged once, at build_chain time, so an operator sees the real cause
-    #   without needing to trigger a request first.
-    assert any("GOOGLE_API_KEY" in str(extra) for _, extra in log.errors)
-
-
-def test_a_working_provider_key_builds_the_real_chain(monkeypatch):
-    monkeypatch.setenv("DB_PASSWORD", "secret")
-    monkeypatch.setenv("RAG_PROVIDER", "gemini")
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
-    config = Config()
-    log = FakeLog()
-
-    class StubRetriever:
-        pass
-
-    from pipeline.rag.chain import AnswerChain
-
-    chain = build_chain(StubRetriever(), config, log)
-    assert isinstance(chain, AnswerChain)
-    assert log.errors == []

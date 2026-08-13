@@ -140,8 +140,23 @@ class AnswerChain:
         self.retriever = retriever
         self.config = config
         self.log = get_logger("rag.chain")
-        self.model = model if model is not None else build_model(config)
+        self._model = model
         self.model_name = providers.spec_for(config).model
+
+    @property
+    def model(self) -> object:
+        """Built on first use rather than in __init__, the same principle
+        Evaluator.metrics already uses for the judge - so a missing provider
+        key fails the first real question rather than blocking a whole
+        long-running service from starting at all. That distinction is what
+        api.py's build_chain()/_BrokenChain used to paper over from the
+        outside; this is the same fix, moved to where the eager construction
+        actually happens, so every caller gets it for free instead of only
+        the one that remembered to wrap it.
+        """
+        if self._model is None:
+            self._model = build_model(self.config)
+        return self._model
 
     def answer(self, question: str) -> dict:
         return self.answer_and_context(question)[0]

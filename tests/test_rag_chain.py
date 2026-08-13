@@ -292,6 +292,54 @@ def test_build_model_delegates_to_providers_with_the_right_arguments(monkeypatch
     assert calls == [(config, GroundedAnswer, MAX_TOKENS, EFFORT)]
 
 
+# ---- the model is built lazily, not at construction
+#
+# A missing provider key would otherwise crash the whole service at startup
+# (api.py's main() builds AnswerChain unconditionally) rather than only the
+# first /ask that needed it. This is chain.py's half of that guarantee;
+# tests/test_rag_api.py proves the end-to-end shape (the service stays up,
+# /ask returns the clear error) on top of it.
+
+
+def test_construction_does_not_build_the_model(monkeypatch):
+    from pipeline.rag import chain as chain_module
+
+    def fail_if_called(config, schema, max_tokens, effort=None):
+        raise AssertionError("build_structured_model was called at construction time")
+
+    monkeypatch.setattr(chain_module.providers, "build_structured_model", fail_if_called)
+
+    # - No key set - if the model were built eagerly, either this call would
+    #   raise ConfigError, or (with the monkeypatch above) the assertion
+    #   inside fail_if_called would. Neither happens: construction never
+    #   touches the model at all.
+    AnswerChain(StubRetriever(), fake_config(anthropic_api_key=None))
+
+
+def test_a_missing_key_surfaces_on_the_first_answer_not_before():
+    from pipeline.exceptions import ConfigError
+
+    chain = AnswerChain(StubRetriever(), fake_config(anthropic_api_key=None))
+    with pytest.raises(ConfigError, match="ANTHROPIC_API_KEY"):
+        chain.answer("anything")
+
+
+def test_the_model_is_built_once_not_per_access(monkeypatch):
+    from pipeline.rag import chain as chain_module
+
+    calls = []
+    monkeypatch.setattr(
+        chain_module.providers,
+        "build_structured_model",
+        lambda *a, **k: calls.append(1) or "built-model",
+    )
+
+    chain = AnswerChain(StubRetriever(), fake_config())
+    assert chain.model == "built-model"
+    assert chain.model == "built-model"
+    assert len(calls) == 1
+
+
 # ---- counting what it cost
 #
 # The counters are the reason the spend panel has anything to draw. A panel

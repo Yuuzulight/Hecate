@@ -121,7 +121,13 @@ data:
           #   once there is real Gemini usage data to check it against, the
           #   same way $1 turned out wrong for RagSpendHigh.
           - alert: RagTokensHigh
-            expr: increase(hecate_rag_tokens_total[24h]) > 1000000
+            # - sum() matters here: hecate_rag_tokens_total carries a `kind`
+            #   label (input/output, see pipeline/metrics.py), so without it
+            #   this evaluates as two separate series each compared to the
+            #   threshold - a 900k-input/900k-output day (1.8M total, well
+            #   past "something is looping") would never trip either series
+            #   alone.
+            expr: sum(increase(hecate_rag_tokens_total[24h])) > 1000000
             for: 10m
             labels:
               severity: critical

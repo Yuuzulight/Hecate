@@ -326,7 +326,10 @@ class Evaluator:
         """
         passages = context_passages(context)
 
-        with ThreadPoolExecutor(max_workers=len(self.metrics)) as pool:
+        # - max(..., 1): ThreadPoolExecutor raises ValueError on max_workers=0,
+        #   which self.metrics being empty would otherwise hit before the loop
+        #   below ever got a chance to return {} on its own.
+        with ThreadPoolExecutor(max_workers=max(len(self.metrics), 1)) as pool:
             futures = {
                 name: pool.submit(self._score_one, name, metric, question, answer, passages)
                 for name, metric in self.metrics.items()

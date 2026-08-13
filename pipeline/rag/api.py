@@ -270,46 +270,10 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
     return app
 
 
-class _BrokenChain:
-    """Stands in for the chain when it couldn't be built.
-
-    Lets the app start cleanly and fail on the first /ask request instead of
-    never starting at all - the same principle build_app's own docstring
-    states for chain/retriever being required rather than Optional. Without
-    this, a missing provider key takes /health and /trending down with it,
-    not just /ask.
-    """
-
-    def __init__(self, error: HecateError) -> None:
-        self.error = error
-
-    def answer(self, question: str) -> dict:
-        raise self.error
-
-
-def build_chain(retriever, config: Config, log) -> object:
-    """AnswerChain, or a stand-in that defers the failure to the first /ask.
-
-    Split out from main() so the fallback path - the part this exists for -
-    can be exercised directly in tests rather than only through a full
-    process start.
-    """
-    from pipeline.rag.chain import AnswerChain
-
-    try:
-        return AnswerChain(retriever, config)
-    except HecateError as exc:
-        # - The provider construction failed - most likely a missing API key
-        #   for the configured RAG_PROVIDER. That is a per-request /ask
-        #   failure, not a reason for the whole service (including /health
-        #   and /trending, which touch no model) to refuse to start.
-        log.error("chain could not be built", extra={"context": {"error": str(exc)}})
-        return _BrokenChain(exc)
-
-
 def main() -> int:
     import uvicorn
 
+    from pipeline.rag.chain import AnswerChain
     from pipeline.rag.retriever import WarehouseRetriever
 
     log = get_logger("rag.api")
@@ -318,8 +282,12 @@ def main() -> int:
     retriever = WarehouseRetriever(config)
     retriever.connect()
 
-    chain = build_chain(retriever, config, log)
-    app = build_app(config, chain=chain, retriever=retriever)
+    # - AnswerChain builds its model lazily (on first .answer() call, not
+    #   here), so a missing provider key doesn't stop the process from
+    #   starting - /health and /trending never touch app.state.chain at all,
+    #   and /ask's existing `except HecateError` below catches the deferred
+    #   ConfigError on first use, same as any other chain failure.
+    app = build_app(config, chain=AnswerChain(retriever, config), retriever=retriever)
     log.info(
         "rag api listening",
         extra={"context": {"port": PORT, "rag_enabled": config.rag_enabled}},

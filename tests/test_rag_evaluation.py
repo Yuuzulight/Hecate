@@ -300,16 +300,28 @@ def test_the_judge_is_wired_to_the_configured_provider(
 
 
 def test_the_judge_defaults_to_gemini_like_everything_else(monkeypatch):
+    # - Deliberately not folded into the parametrized test above: that test
+    #   always sets RAG_PROVIDER explicitly, so it never exercises the
+    #   unset-env-var path through Config's own default. A regression here
+    #   (e.g. spec_for or _instructor_client branching wrong specifically
+    #   when RAG_PROVIDER is absent rather than set to "gemini") would pass
+    #   every case of the parametrized test above and still be broken.
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.delenv("RAG_PROVIDER", raising=False)
     judge = build_judge(Config())
     assert judge.provider == "gemini"
+    assert judge.model == "gemini-3.5-flash"
+    assert type(judge.client.client).__module__.startswith("google")
 
 
-def test_no_key_is_a_clear_error_rather_than_a_silent_fallback(monkeypatch):
-    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(ConfigError):
+@pytest.mark.parametrize(
+    "provider, env_name",
+    [("gemini", "GOOGLE_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY")],
+)
+def test_no_key_is_a_clear_error_rather_than_a_silent_fallback(monkeypatch, provider, env_name):
+    monkeypatch.setenv("RAG_PROVIDER", provider)
+    monkeypatch.delenv(env_name, raising=False)
+    with pytest.raises(ConfigError, match=env_name):
         build_judge(Config())
 
 

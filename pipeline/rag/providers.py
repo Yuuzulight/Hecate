@@ -62,16 +62,15 @@ def spec_for(config: Config) -> ProviderSpec:
     return SPECS[config.rag_provider]
 
 
-# - Which Config attribute and env var name each provider's key lives under.
-#   The single thing require_key needs to do its job for all three, so the
-#   check-and-raise itself exists exactly once rather than once per branch
-#   per caller (this module's build_chat_model and evaluation.py's
-#   _instructor_client both need it, and used to each spell it out inline,
-#   with the same message duplicated in both places).
+# - Which Config attribute each provider's key lives under. The env var name
+#   is always that attribute upper-cased (Config._optional's own convention,
+#   e.g. self.google_api_key = _optional("GOOGLE_API_KEY") - see config.py),
+#   so it isn't stored a second time here; a field that only ever echoed
+#   attr.upper() back was one more place a typo could land uncaught.
 _KEY_ATTR = {
-    "gemini": ("google_api_key", "GOOGLE_API_KEY"),
-    "anthropic": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
-    "openai": ("openai_api_key", "OPENAI_API_KEY"),
+    "gemini": "google_api_key",
+    "anthropic": "anthropic_api_key",
+    "openai": "openai_api_key",
 }
 
 
@@ -84,10 +83,10 @@ def require_key(config: Config, spec: ProviderSpec) -> str:
     the same "is it set, if not raise naming it" check, byte-identical
     message and all, existing twice per provider across two files.
     """
-    attr, env_name = _KEY_ATTR[spec.name]
+    attr = _KEY_ATTR[spec.name]
     value = getattr(config, attr)
     if not value:
-        raise ConfigError(f"{env_name} is required for RAG_PROVIDER={spec.name}")
+        raise ConfigError(f"{attr.upper()} is required for RAG_PROVIDER={spec.name}")
     return value
 
 
