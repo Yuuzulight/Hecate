@@ -120,7 +120,12 @@ def build_chat_model(config: Config, max_tokens: int, effort: str | None = None)
             raise ConfigError("ANTHROPIC_API_KEY is required for RAG_PROVIDER=anthropic")
         from langchain_anthropic import ChatAnthropic
 
-        kwargs = {"model": spec.model, "max_tokens": max_tokens}
+        # - api_key passed explicitly, not left to ChatAnthropic's own
+        #   ANTHROPIC_API_KEY env lookup: that lookup has no .strip(), so a
+        #   value with trailing whitespace (routine for secrets mounted from
+        #   files, e.g. a k8s secret volume) would authenticate with a
+        #   different byte string than the one just validated as present.
+        kwargs = {"model": spec.model, "max_tokens": max_tokens, "api_key": config.anthropic_api_key}
         if effort is not None:
             kwargs["output_config"] = {"effort": effort}
         return ChatAnthropic(**kwargs)

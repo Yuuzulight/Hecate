@@ -80,6 +80,22 @@ def test_build_chat_model_anthropic_constructs_with_a_key(env):
     assert isinstance(model, ChatAnthropic)
 
 
+def test_build_chat_model_anthropic_uses_configs_key_not_the_raw_env_var(env):
+    # - ChatAnthropic falls back to its own (unstripped) os.getenv lookup if
+    #   api_key isn't passed explicitly. Config's value is what was actually
+    #   validated as present, so it has to be what the client authenticates
+    #   with - proven here by making the two differ and checking which one
+    #   wins, not just that construction succeeds.
+    env.setenv("RAG_PROVIDER", "anthropic")
+    env.setenv("ANTHROPIC_API_KEY", "sk-ant-config-value")
+    config = Config()
+    assert config.anthropic_api_key == "sk-ant-config-value"
+
+    env.setenv("ANTHROPIC_API_KEY", "sk-ant-different-runtime-value")
+    model = providers.build_chat_model(config, max_tokens=100)
+    assert model.anthropic_api_key.get_secret_value() == "sk-ant-config-value"
+
+
 def test_build_chat_model_openai_needs_a_key(env):
     env.setenv("RAG_PROVIDER", "openai")
     with pytest.raises(ConfigError, match="OPENAI_API_KEY"):
