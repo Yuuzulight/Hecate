@@ -299,6 +299,32 @@ def test_the_judge_is_wired_to_the_configured_provider(
     assert type(judge.client.client).__module__.startswith(client_module_prefix)
 
 
+def test_the_anthropic_judge_does_not_send_temperature_or_top_p(monkeypatch):
+    # - Claude Opus 5 rejects both outright ("temperature is deprecated for
+    #   this model", 400) - confirmed live, every Anthropic judge call failed
+    #   on this before build_judge stripped them. InstructorLLM's Anthropic
+    #   branch is a pass-through with no per-model handling of its own, so
+    #   nothing catches this except build_judge doing it explicitly.
+    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    judge = build_judge(Config())
+    assert "temperature" not in judge.model_args
+    assert "top_p" not in judge.model_args
+
+
+@pytest.mark.parametrize("provider, env_name", [("gemini", "GOOGLE_API_KEY"), ("openai", "OPENAI_API_KEY")])
+def test_other_providers_keep_instructorllms_default_sampling_params(monkeypatch, provider, env_name):
+    # - The strip above is Anthropic-specific because the constraint is
+    #   Anthropic-specific (chain.py documents the same thing for Claude Opus
+    #   5 on the answering side). Gemini and OpenAI have raised no such
+    #   error, live or otherwise, so their defaults should survive untouched.
+    monkeypatch.setenv("RAG_PROVIDER", provider)
+    monkeypatch.setenv(env_name, "test-key")
+    judge = build_judge(Config())
+    assert judge.model_args.get("temperature") == 0.01
+    assert judge.model_args.get("top_p") == 0.1
+
+
 def test_the_judge_defaults_to_gemini_like_everything_else(monkeypatch):
     # - Deliberately not folded into the parametrized test above: that test
     #   always sets RAG_PROVIDER explicitly, so it never exercises the
@@ -439,6 +465,73 @@ def test_a_run_where_every_metric_failed_does_not_exit_clean(monkeypatch, caplog
     assert "evaluation run finished" in messages
     assert "no metric produced a score" in messages
     assert "evaluation run failed" not in messages
+
+
+def test_a_mid_run_failure_keeps_the_rows_already_scored(monkeypatch):
+    # - Confirmed live: record() used to run once, after every question in
+    #   QUESTIONS had already been answered and scored - so a failure
+    #   partway through (a spent-down Anthropic credit balance, in the
+    #   incident this fixes; a rate limit or a network blip would do the
+    #   same) discarded every prior question's real, already-paid-for score
+    #   along with it. This proves the fix: each row lands as soon as its
+    #   question finishes, so a crash here loses at most the one in flight.
+    from pipeline.rag import chain as chain_module
+    from pipeline.rag import retriever as retriever_module
+
+    class StubRetriever:
+        def __init__(self, config):
+            pass
+
+        def connect(self):
+            pass
+
+        def close(self):
+            pass
+
+    FAIL_AFTER = 2
+
+    class StubChain:
+        def __init__(self, retriever, config):
+            self.calls = 0
+
+        def answer_and_context(self, question):
+            self.calls += 1
+            if self.calls > FAIL_AFTER:
+                raise RuntimeError("credit balance too low")
+            return {"answer": "something", "latency_ms": 1, "answer_model": "stub"}, CONTEXT
+
+    recorded = []
+
+    class StubEvaluator(Evaluator):
+        def __init__(self, config):
+            super().__init__(config, metrics={
+                "faithfulness": StubMetric(0.9),
+                "relevance": StubMetric(0.8),
+            })
+
+        def connect(self):
+            pass
+
+        def close(self):
+            pass
+
+        def create_table(self):
+            pass
+
+        def record(self, rows):
+            recorded.extend(rows)
+            return len(rows)
+
+    monkeypatch.setattr(retriever_module, "WarehouseRetriever", StubRetriever)
+    monkeypatch.setattr(chain_module, "AnswerChain", StubChain)
+    monkeypatch.setattr(evaluation, "Evaluator", StubEvaluator)
+
+    assert evaluation.main() == 1
+
+    # - The questions before the failure were recorded, not lost with it -
+    #   the whole point of writing incrementally rather than batching until
+    #   every question in QUESTIONS has succeeded.
+    assert len(recorded) == FAIL_AFTER
 
 
 # ---- against a real database

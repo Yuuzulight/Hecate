@@ -215,9 +215,25 @@ def build_judge(config: Config):
     #   genai handler performs an equivalent remapping itself - confirmed live
     #   by observing max_tokens correctly reaching model_args. Fragile but
     #   working; worth knowing before "cleaning up" the provider string.
-    return InstructorLLM(
+    judge = InstructorLLM(
         client=client, model=spec.model, provider=spec.name, max_tokens=JUDGE_MAX_TOKENS
     )
+    if spec.name == "anthropic":
+        # - InstructorLLM defaults to temperature=0.01, top_p=0.1 (ragas's own
+        #   InstructorModelArgs), and its Anthropic branch is the same
+        #   pass-through _map_provider_params noted above - no per-model
+        #   handling, so both reach Claude Opus 5's real API call. It rejects
+        #   them outright: "temperature is deprecated for this model" (400) -
+        #   confirmed live, every judge call failed on this the first time
+        #   RAG_PROVIDER=anthropic evaluation actually ran. Same constraint
+        #   chain.py's EFFORT comment already documents for the answering
+        #   side; the judge path just never got the same treatment because it
+        #   was never live-tested until now. No constructor option removes a
+        #   key model_args already set - this is the dict InstructorLLM reads
+        #   from on every call, so popping from it here is the only lever.
+        judge.model_args.pop("temperature", None)
+        judge.model_args.pop("top_p", None)
+    return judge
 
 
 def build_metrics(config: Config) -> dict:
@@ -415,28 +431,35 @@ def main() -> int:
     retriever = WarehouseRetriever(config)
     evaluator = Evaluator(config)
 
+    rows = []
+    written = 0
     try:
         retriever.connect()
         evaluator.connect()
         evaluator.create_table()
 
         chain = AnswerChain(retriever, config)
-        rows = []
         for question in QUESTIONS:
             # - The context the answer actually used, not a second retrieval of
             #   it. Asking again would score the answer against evidence it
             #   never saw if a snapshot landed mid-run.
             answer, context = chain.answer_and_context(question["question"])
-            rows.append(
-                evaluator.evaluate(
-                    question["question"],
-                    answer,
-                    context,
-                    question_id=question["id"],
-                )
+            row = evaluator.evaluate(
+                question["question"],
+                answer,
+                context,
+                question_id=question["id"],
             )
-
-        written = evaluator.record(rows)
+            rows.append(row)
+            # - Written as each question finishes, not batched until every
+            #   question has - confirmed live: a mid-run failure (a spent-down
+            #   Anthropic credit balance, in this case; a rate limit or a
+            #   network blip would do the same) used to discard every prior
+            #   question's real, already-paid-for score along with it, because
+            #   record() was only ever called once, after the loop. One row
+            #   per call instead, so a crash here loses at most the question
+            #   in flight, not the ones already scored.
+            written += evaluator.record([row])
     except Exception as exc:
         log.exception("evaluation run failed", extra={"context": {"error": str(exc)}})
         return 1
