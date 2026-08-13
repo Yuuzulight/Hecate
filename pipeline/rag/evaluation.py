@@ -72,7 +72,17 @@ from pipeline.rag import providers
 
 # - The judge writes a short structured verdict, not prose. This is a ceiling
 #   against a runaway response, not a target.
-JUDGE_MAX_TOKENS = 2048
+#
+#   2048 was not enough: confirmed live, 3 of 12 questions in the first real
+#   run truncated Faithfulness mid-output ("output is incomplete due to a
+#   max_tokens length limit"), losing the score entirely rather than
+#   shortening it - Faithfulness decomposes the answer into individual claims
+#   before verifying each one, so an answer citing more repositories needs
+#   more output to get through the same structured response. All three that
+#   truncated had cited 10 repository_ids; every answer that scored cleanly
+#   cited fewer. Doubled rather than tuned to the exact failure, since the
+#   next longer answer would just find a tighter ceiling's edge again.
+JUDGE_MAX_TOKENS = 4096
 
 # ponytail: a flat threshold, and a guess until there are enough scored runs to
 # put a number on it. It is deliberately generous - the cost of missing a
