@@ -282,12 +282,12 @@ def test_the_judge_is_wired_to_the_configured_provider(
     monkeypatch.setenv("RAG_PROVIDER", provider)
     monkeypatch.setenv(env_name, key)
     judge = build_judge(Config())
-    # - The brief's original guess here was ragas.llms.LangchainLLMWrapper
-    #   wrapping providers.build_chat_model's LangChain model, asserted via a
-    #   presumed `.langchain_llm` attribute. A live smoke test proved that
-    #   shape wrong: ragas 0.4.3's collections metrics (what build_metrics
-    #   actually uses) reject a LangchainLLMWrapper outright with "Collections
-    #   metrics only support modern InstructorLLM" - see task-4-report.md.
+    # - The original design assumed ragas.llms.LangchainLLMWrapper wrapping
+    #   providers.build_chat_model's LangChain model, asserted via a presumed
+    #   `.langchain_llm` attribute. A live smoke test proved that shape wrong:
+    #   ragas 0.4.3's collections metrics (what build_metrics actually uses)
+    #   reject a LangchainLLMWrapper outright with "Collections metrics only
+    #   support modern InstructorLLM" - confirmed live, not assumed.
     #   build_judge was adjusted to build an InstructorLLM, but not via
     #   ragas.llms.llm_factory - that was tried first and found broken for
     #   Gemini specifically (a sync/async mismatch; see evaluation.py's module

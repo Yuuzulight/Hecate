@@ -31,10 +31,9 @@ The two metrics used here - ragas.metrics.collections.Faithfulness and
 RubricsScoreWithoutReference - are the current, non-deprecated ones, and they
 require a modern InstructorLLM wrapping a *raw* provider SDK client
 (anthropic.AsyncAnthropic, google.genai.Client, openai.AsyncOpenAI), patched
-by the instructor library - confirmed live rather than assumed, see the
-task 4 report for the transcript of a LangChain model building without error
-and then failing at Faithfulness(llm=...) with "Collections metrics only
-support modern InstructorLLM".
+by the instructor library - confirmed live rather than assumed: a LangChain
+model builds without error and only fails at Faithfulness(llm=...) with
+"Collections metrics only support modern InstructorLLM".
 
 ragas.llms.llm_factory does this same patching, and was the first thing
 tried, but it routes Gemini through instructor.from_genai() without the
@@ -42,9 +41,8 @@ use_async=True flag that provider needs (Anthropic and OpenAI don't need the
 flag - an Async* client is enough for instructor to detect on its own) - so a
 Gemini judge built through llm_factory silently comes back synchronous, and
 every metric's .score() (async-only under the hood) fails the same way as
-the LangChain shape did. Also confirmed live, also in the task 4 report.
-build_judge patches the client itself instead, picking the provider the same
-way providers.py does.
+the LangChain shape did. Also confirmed live. build_judge patches the client
+itself instead, picking the provider the same way providers.py does.
 
 Reaching OpenAI through a second door was the real risk this used to guard
 against with an Anthropic-only judge: RAGAS's usual relevance metric works by
@@ -224,10 +222,10 @@ def _instructor_client(config: Config, spec: providers.ProviderSpec):
     was passed in. ragas.metrics.collections' async-only .ascore() path (used
     by every metric's .score()) then raises "Cannot use agenerate() with a
     synchronous client" on every call - confirmed live against a real
-    GOOGLE_API_KEY, see the task 4 report for the transcript. Patching here
-    directly, with use_async=True added for Gemini, is the one-line difference
-    that makes the default provider actually work; done for all three so the
-    construction path is the same regardless of which one is configured.
+    GOOGLE_API_KEY. Patching here directly, with use_async=True added for
+    Gemini, is the one-line difference that makes the default provider
+    actually work; done for all three so the construction path is the same
+    regardless of which one is configured.
 
     Also registers a completion:response hook that feeds token/cost metrics
     (see _record_judge_spend) - confirmed live that this fires with the raw,

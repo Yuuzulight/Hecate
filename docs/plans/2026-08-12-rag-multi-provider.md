@@ -1,7 +1,5 @@
 # Multi-provider RAG (Gemini/Anthropic/OpenAI) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Make the RAG answering chain and evaluation judge use a config-selected provider (`RAG_PROVIDER=gemini|anthropic|openai`, default `gemini`) instead of being hardcoded to Claude, so `/ask` and evaluations work without spending Anthropic credits the account doesn't have.
 
 **Architecture:** A new `pipeline/rag/providers.py` module owns all provider-specific construction (client, model name, pricing, structured-output binding). `chain.py` and `evaluation.py` both build their models through it instead of constructing `ChatAnthropic`/`ragas.llm_factory` directly.
@@ -17,7 +15,7 @@
 - Every doc/comment claiming "the judge is Claude" or "you need an Anthropic key" must be updated in the same task that changes the code it describes — five locations found during spec review: `ARCHITECTURE.md` (two places), `README.md` (three places), `.env.example`, `k8s/10-rag-api.yaml`, and `evaluation.py`'s own module docstring.
 - The two known integration risks (Gemini's `with_structured_output` shape, RAGAS's `LangchainLLMWrapper` compatibility with the `collections` metrics API) must be verified by a **manual run with real credentials** — CI never uses real provider keys (`.github/workflows/test.yml` only sets fake ones via `monkeypatch`), so a green CI run cannot substitute for this.
 
-Spec: `docs/superpowers/specs/2026-08-12-rag-multi-provider-design.md`
+Spec: `docs/specs/2026-08-12-rag-multi-provider-design.md`
 
 ---
 
@@ -1309,7 +1307,7 @@ The spec's "Deferred" section explicitly set aside automatic runtime fallback (r
 ```bash
 gh issue create --repo Yuuzulight/Hecate \
   --title "Consider automatic provider fallback for RAG_PROVIDER" \
-  --body "Manual provider selection (RAG_PROVIDER=gemini/anthropic/openai) shipped in $(git log -1 --format=%H). Automatic fallback - retry with the next provider in a list if the configured one fails at request time - was considered and deliberately set aside in favor of the manual switch (see docs/superpowers/specs/2026-08-12-rag-multi-provider-design.md, 'Deferred - not building now'). Worth revisiting once the manual version has been live long enough to know how often a switch would actually be needed. Open questions the original spec didn't answer: which failures are worth falling back on versus surfacing, and how answer_model/judge_model should record a fallback having happened rather than silently reporting the configured provider."
+  --body "Manual provider selection (RAG_PROVIDER=gemini/anthropic/openai) shipped in $(git log -1 --format=%H). Automatic fallback - retry with the next provider in a list if the configured one fails at request time - was considered and deliberately set aside in favor of the manual switch (see docs/specs/2026-08-12-rag-multi-provider-design.md, 'Deferred - not building now'). Worth revisiting once the manual version has been live long enough to know how often a switch would actually be needed. Open questions the original spec didn't answer: which failures are worth falling back on versus surfacing, and how answer_model/judge_model should record a fallback having happened rather than silently reporting the configured provider."
 ```
 
 Expected: a new issue on the repo, low priority, no assignee — a placeholder so the idea isn't lost, not a commitment to build it.

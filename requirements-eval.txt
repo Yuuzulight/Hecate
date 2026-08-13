@@ -30,8 +30,9 @@ jsonref==1.1.0
 
 # - evaluation.py's build_judge imports instructor, google.genai and openai
 #   directly now (patching a raw async client per provider, since ragas's own
-#   collections metrics and llm_factory both turned out not to work for this
-#   - see task-4-report.md). All three previously arrived only as transitive
+#   collections metrics and llm_factory both turned out not to work for this -
+#   confirmed live, not assumed; see evaluation.py's own module docstring for
+#   the detail). All three previously arrived only as transitive
 #   dependencies - instructor via ragas (whose own pin on it has no version
 #   bound at all), google-genai via langchain-google-genai, openai via
 #   langchain-openai - so nothing here pinned the exact API build_judge
