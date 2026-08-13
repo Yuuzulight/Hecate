@@ -34,6 +34,29 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def fake_config(rag_provider="anthropic", anthropic_api_key="sk-ant-test"):
+    """A Config-like object good enough for build_model - never actually
+    reaches the network because the tests either stub the model or only
+    inspect what build_model constructs without calling .invoke()."""
+    from pipeline.config import Config
+
+    import os
+
+    old = {k: os.environ.get(k) for k in ("DB_PASSWORD", "RAG_PROVIDER", "ANTHROPIC_API_KEY")}
+    os.environ["DB_PASSWORD"] = "secret"
+    os.environ["RAG_PROVIDER"] = rag_provider
+    if anthropic_api_key:
+        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+    try:
+        return Config()
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 CONTEXT = {
     "coverage": {"repositories": 2013, "snapshot_days": 2, "history_to": "2026-08-09"},
     "sources": [{"source": "github", "with_stars": 508, "with_downloads": 0}],
@@ -81,7 +104,7 @@ def chain_returning(**kwargs):
     )
     retriever = StubRetriever(kwargs.pop("context", None))
     model = StubModel(answer)
-    return AnswerChain(retriever, model=model), model
+    return AnswerChain(retriever, fake_config(), model=model), model
 
 
 # ---- what the model is shown
@@ -214,7 +237,7 @@ def test_every_answer_carries_a_latency():
 def test_the_response_has_exactly_the_agreed_shape():
     chain, _ = chain_returning()
     result = chain.answer("what is growing")
-    assert set(result) == {"answer", "confidence", "sources", "latency_ms"}
+    assert set(result) == {"answer", "confidence", "sources", "latency_ms", "answer_model"}
     assert set(result["sources"]) == {"repository_ids", "blocks"}
 
 
@@ -239,70 +262,82 @@ def test_an_empty_context_cites_nothing_rather_than_failing():
 
 # ---- how the model is wired, which is the part a stub cannot show
 #
-# These build the real ChatAnthropic. It constructs without an API key and
-# nothing is sent, so they run in CI - and they catch the one failure that
-# would otherwise only appear on the first live question.
+# build_model is a one-line pass-through to providers.build_structured_model
+# (tests/test_providers.py owns the actual LangChain wiring: tool_choice,
+# include_raw, effort, schema properties reaching the request - all of it
+# against build_structured_model directly, not re-derived here per-schema).
+# What is chain.py's own to prove is that build_model calls it with the right
+# arguments - GroundedAnswer, MAX_TOKENS, EFFORT - which a spy shows more
+# directly than walking the LangChain internals a second time would.
 
 
-def bound_model(structured):
-    """The bound ChatAnthropic inside whatever LangChain wrapped it in.
+def test_build_model_delegates_to_providers_with_the_right_arguments(monkeypatch):
+    from pipeline.rag import chain as chain_module
+    from pipeline.rag.chain import EFFORT, MAX_TOKENS, build_model
 
-    include_raw puts the model behind a RunnableParallel, so reaching it is a
-    step deeper than it was. Kept in one place so a LangChain version bump
-    breaks one helper rather than four tests.
-    """
-    first = structured.first
-    steps = getattr(first, "steps__", None) or getattr(first, "steps", None)
-    return steps["raw"] if steps else first
+    calls = []
 
+    def fake_build_structured_model(config, schema, max_tokens, effort=None):
+        calls.append((config, schema, max_tokens, effort))
+        return "the-built-model"
 
-def test_the_model_does_not_force_a_tool_call():
-    # - The forced-tool path is rejected by the API whenever thinking is on,
-    #   and thinking is on by default on this model. langchain guards against
-    #   the combination, but only when its own `thinking` field is set, which
-    #   it is not here - so the guard misses and the request would 400.
-    from pipeline.rag.chain import build_model
+    monkeypatch.setattr(
+        chain_module.providers, "build_structured_model", fake_build_structured_model
+    )
 
-    assert "tool_choice" not in bound_model(build_model()).kwargs
+    config = fake_config()
+    result = build_model(config)
 
-
-def test_the_answer_schema_reaches_the_request():
-    from pipeline.rag.chain import build_model
-
-    bound = bound_model(build_model()).kwargs
-    schema = bound["output_config"]["format"]["schema"]
-    assert set(schema["properties"]) == {"answer", "confidence", "sources"}
+    assert result == "the-built-model"
+    assert calls == [(config, GroundedAnswer, MAX_TOKENS, EFFORT)]
 
 
-def test_effort_survives_the_structured_output_binding():
-    # - Both settings write to output_config. If the bind replaced rather than
-    #   merged, effort would vanish silently and only show up on the bill.
-    from pipeline.rag.chain import EFFORT, build_chat_model, build_model
-
-    assert bound_model(build_model()).kwargs["output_config"]["format"]
-    assert build_chat_model().output_config == {"effort": EFFORT}
-
-
-def test_no_sampling_parameters_are_sent():
-    # - temperature, top_p and top_k are removed on this model and any of them
-    #   is a 400. The scope asked for temperature 0.2; the prompt carries that
-    #   intent instead.
-    from pipeline.rag.chain import build_chat_model
-
-    model = build_chat_model()
-    assert model.temperature is None
-    assert model.top_p is None
-    assert model.top_k is None
+# ---- the model is built lazily, not at construction
+#
+# A missing provider key would otherwise crash the whole service at startup
+# (api.py's main() builds AnswerChain unconditionally) rather than only the
+# first /ask that needed it. This is chain.py's half of that guarantee;
+# tests/test_rag_api.py proves the end-to-end shape (the service stays up,
+# /ask returns the clear error) on top of it.
 
 
-def test_the_raw_message_comes_back_so_spend_can_be_counted():
-    # - Without include_raw the parsed object arrives alone and the token
-    #   counts are gone, which would leave the spend panel drawing an empty
-    #   graph that looks exactly like no spend.
-    from pipeline.rag.chain import build_model
+def test_construction_does_not_build_the_model(monkeypatch):
+    from pipeline.rag import chain as chain_module
 
-    assert isinstance(build_model().first.steps__, dict)
-    assert "raw" in build_model().first.steps__
+    def fail_if_called(config, schema, max_tokens, effort=None):
+        raise AssertionError("build_structured_model was called at construction time")
+
+    monkeypatch.setattr(chain_module.providers, "build_structured_model", fail_if_called)
+
+    # - No key set - if the model were built eagerly, either this call would
+    #   raise ConfigError, or (with the monkeypatch above) the assertion
+    #   inside fail_if_called would. Neither happens: construction never
+    #   touches the model at all.
+    AnswerChain(StubRetriever(), fake_config(anthropic_api_key=None))
+
+
+def test_a_missing_key_surfaces_on_the_first_answer_not_before():
+    from pipeline.exceptions import ConfigError
+
+    chain = AnswerChain(StubRetriever(), fake_config(anthropic_api_key=None))
+    with pytest.raises(ConfigError, match="ANTHROPIC_API_KEY"):
+        chain.answer("anything")
+
+
+def test_the_model_is_built_once_not_per_access(monkeypatch):
+    from pipeline.rag import chain as chain_module
+
+    calls = []
+    monkeypatch.setattr(
+        chain_module.providers,
+        "build_structured_model",
+        lambda *a, **k: calls.append(1) or "built-model",
+    )
+
+    chain = AnswerChain(StubRetriever(), fake_config())
+    assert chain.model == "built-model"
+    assert chain.model == "built-model"
+    assert len(calls) == 1
 
 
 # ---- counting what it cost
@@ -324,9 +359,10 @@ def counter_value(metric, **labels):
 
 def test_tokens_and_cost_are_counted_from_the_raw_message():
     from pipeline import metrics
-    from pipeline.rag.chain import PRICE_PER_MTOK_INPUT, PRICE_PER_MTOK_OUTPUT
+    from pipeline.rag import providers
 
     chain, _ = chain_returning()
+    spec = providers.spec_for(chain.config)
     before_in = counter_value(metrics.rag_tokens, kind="input")
     before_cost = counter_value(metrics.rag_cost)
 
@@ -338,8 +374,44 @@ def test_tokens_and_cost_are_counted_from_the_raw_message():
     })
 
     assert counter_value(metrics.rag_tokens, kind="input") - before_in == 12000
-    expected = 12000 / 1e6 * PRICE_PER_MTOK_INPUT + 400 / 1e6 * PRICE_PER_MTOK_OUTPUT
+    expected = 12000 / 1e6 * spec.price_per_mtok_input + 400 / 1e6 * spec.price_per_mtok_output
     assert counter_value(metrics.rag_cost) - before_cost == pytest.approx(expected)
+
+
+def test_a_gemini_answer_costs_nothing():
+    # - anthropic's price_per_mtok happens to equal the deleted hardcoded
+    #   PRICE_PER_MTOK_INPUT/OUTPUT constants, so the anthropic-flavoured test
+    #   above would pass just as well against stale hardcoded values as
+    #   against a genuine providers.spec_for(self.config) lookup. Only a
+    #   non-anthropic provider - gemini is free - actually proves the cost is
+    #   read from the configured provider rather than pinned to Claude's price.
+    from pipeline import metrics
+    from pipeline.rag import providers
+
+    chain, _ = chain_returning()
+    chain.config = fake_config(rag_provider="gemini", anthropic_api_key=None)
+
+    spec = providers.spec_for(chain.config)
+    assert spec.price_per_mtok_input == 0.0
+    assert spec.price_per_mtok_output == 0.0
+
+    # - model_name is a property read from self.config, not a value cached at
+    #   construction time - otherwise this reassignment above would leave it
+    #   reporting chain_returning()'s original anthropic model while the
+    #   price computed below already reflects gemini, a silent mismatch
+    #   between the answer_model an answer reports and what it actually cost.
+    assert chain.model_name == "gemini-3.5-flash"
+
+    before_cost = counter_value(metrics.rag_cost)
+
+    answer = GroundedAnswer(answer="a", confidence="high", sources=Sources())
+    chain._unwrap({
+        "raw": FakeMessage({"input_tokens": 12000, "output_tokens": 400}),
+        "parsed": answer,
+        "parsing_error": None,
+    })
+
+    assert counter_value(metrics.rag_cost) - before_cost == 0.0
 
 
 def test_an_unreadable_answer_is_loud_rather_than_empty():

@@ -4,6 +4,7 @@ import pytest
 
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError
+from pipeline.rag.provider_names import PROVIDER_NAMES
 
 # - Config reads the process environment at construction, so each test sets up
 #   the variables it cares about and clears the rest.
@@ -11,6 +12,7 @@ ALL_VARS = [
     "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME",
     "GITHUB_TOKEN", "GITLAB_TOKEN", "NPM_REGISTRY", "PYPI_REGISTRY",
     "BATCH_SIZE", "RETRY_ATTEMPTS",
+    "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "RAG_PROVIDER",
 ]
 
 
@@ -31,6 +33,8 @@ def test_defaults_apply_when_nothing_is_set(env):
     assert config.batch_size == 100
     assert config.retry_attempts == 3
     assert config.github_token == ""
+    assert config.google_api_key == ""
+    assert config.rag_provider == "gemini"
 
 
 def test_environment_overrides_defaults(env):
@@ -73,3 +77,21 @@ def test_blank_value_falls_back_to_the_default(env):
 def test_repr_hides_the_password(env):
     env.setenv("DB_PASSWORD", "hunter2")
     assert "hunter2" not in repr(Config())
+
+
+@pytest.mark.parametrize("value", [*PROVIDER_NAMES, *(name.upper() for name in PROVIDER_NAMES)])
+def test_rag_provider_accepts_every_known_value_case_insensitively(env, value):
+    # - Parametrized directly off PROVIDER_NAMES rather than a separately
+    #   hardcoded list, so this doubles as proof Config's validation and
+    #   providers.py's SPECS actually agree on what's valid - Config can't
+    #   import pipeline.rag.providers (circular import), so the two are
+    #   independent imports of the same tuple, and this is what would catch
+    #   them drifting apart.
+    env.setenv("RAG_PROVIDER", value)
+    assert Config().rag_provider == value.lower()
+
+
+def test_an_unknown_rag_provider_is_an_error(env):
+    env.setenv("RAG_PROVIDER", "chatgpt")
+    with pytest.raises(ConfigError, match="RAG_PROVIDER"):
+        Config()

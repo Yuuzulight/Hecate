@@ -212,45 +212,144 @@ def test_both_metrics_see_the_question_the_answer_and_the_context():
         assert len(call["retrieved_contexts"]) == 2
 
 
+class SlowStubMetric:
+    """Sleeps before returning, to prove the two metrics run concurrently
+    rather than one after the other - the two real LLM round trips this
+    stands in for are exactly why it matters."""
+
+    SLEEP_SECONDS = 0.2
+
+    def __init__(self, value):
+        self.value = value
+
+    def score(self, **kwargs):
+        import time
+
+        time.sleep(self.SLEEP_SECONDS)
+        return type("Result", (), {"value": self.value})()
+
+
+def test_the_two_metrics_run_concurrently_not_sequentially():
+    import time
+
+    metrics = {
+        "faithfulness": SlowStubMetric(0.9),
+        "relevance": SlowStubMetric(0.8),
+    }
+    ev = Evaluator(Config(), metrics=metrics)
+
+    started = time.perf_counter()
+    scores = ev.score("what grew", ANSWER["answer"], CONTEXT)
+    elapsed = time.perf_counter() - started
+
+    assert scores == {"faithfulness": 0.9, "relevance": 0.8}
+    # - Run sequentially this would take >= 2 * SLEEP_SECONDS. A generous
+    #   margin over one sleep rather than a tight one, so this isn't flaky
+    #   under a loaded CI runner - the two-sleeps-worth sequential case
+    #   would still fail it by a wide margin.
+    assert elapsed < SlowStubMetric.SLEEP_SECONDS * 1.5
+
+
 def test_the_row_carries_both_models():
     ev = evaluator_with()
     row = ev.evaluate("what grew", ANSWER, CONTEXT)
-    assert row["judge_model"] == evaluation.JUDGE_MODEL
+    from pipeline.rag import providers
+
+    assert row["judge_model"] == providers.spec_for(ev.config).model
     assert row["answer_model"] == "claude-opus-5"
 
 
-# ---- the judge is Claude
+# ---- the judge, wired to whichever provider is configured
 #
 # The real proof is the absence of an OpenAI request on a live run. These are
-# the offline half: the judge is wired to Anthropic, and neither metric has an
-# embeddings parameter - which is the one door RAGAS would otherwise use to
-# reach OpenAI regardless of what the judge is set to.
+# the offline half: closing RAGAS's one side door back to OpenAI (an
+# embeddings-taking relevance metric), which matters regardless of which
+# provider judges.
 
 
-def test_the_judge_is_wired_to_anthropic(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+@pytest.mark.parametrize(
+    "provider, env_name, key, model, client_module_prefix",
+    [
+        ("anthropic", "ANTHROPIC_API_KEY", "sk-ant-test", "claude-opus-5", "anthropic"),
+        ("gemini", "GOOGLE_API_KEY", "test-key", "gemini-3.5-flash", "google"),
+        ("openai", "OPENAI_API_KEY", "sk-test", "gpt-5.1", "openai"),
+    ],
+)
+def test_the_judge_is_wired_to_the_configured_provider(
+    monkeypatch, provider, env_name, key, model, client_module_prefix
+):
+    monkeypatch.setenv("RAG_PROVIDER", provider)
+    monkeypatch.setenv(env_name, key)
     judge = build_judge(Config())
-    assert judge.provider == "anthropic"
-    assert judge.model == evaluation.JUDGE_MODEL
-    assert type(judge.client.client).__module__.startswith("anthropic")
+    # - The brief's original guess here was ragas.llms.LangchainLLMWrapper
+    #   wrapping providers.build_chat_model's LangChain model, asserted via a
+    #   presumed `.langchain_llm` attribute. A live smoke test proved that
+    #   shape wrong: ragas 0.4.3's collections metrics (what build_metrics
+    #   actually uses) reject a LangchainLLMWrapper outright with "Collections
+    #   metrics only support modern InstructorLLM" - see task-4-report.md.
+    #   build_judge was adjusted to build an InstructorLLM, but not via
+    #   ragas.llms.llm_factory - that was tried first and found broken for
+    #   Gemini specifically (a sync/async mismatch; see evaluation.py's module
+    #   docstring). It uses evaluation.py's own _instructor_client helper over
+    #   a raw provider SDK client instead, which is what these assertions
+    #   check: the raw client underneath is the configured provider's own SDK,
+    #   not some other provider's leaking in.
+    assert judge.provider == provider
+    assert judge.model == model
+    assert type(judge.client.client).__module__.startswith(client_module_prefix)
 
 
-def test_no_key_is_a_clear_error_rather_than_a_silent_openai_fallback(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(ConfigError):
+def test_the_judge_defaults_to_gemini_like_everything_else(monkeypatch):
+    # - Deliberately not folded into the parametrized test above: that test
+    #   always sets RAG_PROVIDER explicitly, so it never exercises the
+    #   unset-env-var path through Config's own default. A regression here
+    #   (e.g. spec_for or _instructor_client branching wrong specifically
+    #   when RAG_PROVIDER is absent rather than set to "gemini") would pass
+    #   every case of the parametrized test above and still be broken.
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.delenv("RAG_PROVIDER", raising=False)
+    judge = build_judge(Config())
+    assert judge.provider == "gemini"
+    assert judge.model == "gemini-3.5-flash"
+    assert type(judge.client.client).__module__.startswith("google")
+
+
+@pytest.mark.parametrize(
+    "provider, env_name",
+    [("gemini", "GOOGLE_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY")],
+)
+def test_no_key_is_a_clear_error_rather_than_a_silent_fallback(monkeypatch, provider, env_name):
+    monkeypatch.setenv("RAG_PROVIDER", provider)
+    monkeypatch.delenv(env_name, raising=False)
+    with pytest.raises(ConfigError, match=env_name):
         build_judge(Config())
 
 
 def test_neither_metric_takes_an_embeddings_model(monkeypatch):
     # - RAGAS' usual relevance metric embeds the answer to compare it, and
-    #   there is no Anthropic embeddings API - so choosing it would have pulled
-    #   OpenAI back in through the side door with the judge still reading
-    #   "anthropic". Both metrics here are LLM-only, and this is what keeps
-    #   them that way.
+    #   Anthropic sells no embeddings API - so choosing it would have pulled
+    #   OpenAI back in through the side door regardless of which provider the
+    #   judge is set to. Both metrics here are LLM-only, and this is what
+    #   keeps them that way, independent of provider.
+    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    for metric in build_metrics(build_judge(Config())).values():
+    for metric in build_metrics(Config()).values():
         parameters = inspect.signature(type(metric).__init__).parameters
         assert "embeddings" not in parameters, f"{type(metric).__name__} would need embeddings"
+
+
+def test_the_two_metrics_do_not_share_a_judge_client(monkeypatch):
+    # - Evaluator.score() runs both metrics concurrently, each in its own
+    #   thread with its own event loop (see Evaluator.score's docstring). A
+    #   shared client means both threads driving the same httpx/httpcore
+    #   async connection pool, which httpcore documents as unsynchronized in
+    #   the async case. Two independent clients is what actually closes that
+    #   gap, so it's worth asserting directly rather than trusting that
+    #   build_metrics keeps doing it.
+    monkeypatch.setenv("RAG_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    built = build_metrics(Config())
+    assert built["faithfulness"].llm.client is not built["relevance"].llm.client
 
 
 def test_the_relevance_rubric_rewards_a_correct_refusal():
@@ -301,11 +400,11 @@ def test_a_run_where_every_metric_failed_does_not_exit_clean(monkeypatch, caplog
             pass
 
     class StubChain:
-        def __init__(self, retriever):
+        def __init__(self, retriever, config):
             pass
 
         def answer_and_context(self, question):
-            return {"answer": "something", "latency_ms": 1}, CONTEXT
+            return {"answer": "something", "latency_ms": 1, "answer_model": "stub"}, CONTEXT
 
     class StubEvaluator(Evaluator):
         def __init__(self, config):

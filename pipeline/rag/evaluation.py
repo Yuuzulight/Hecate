@@ -16,29 +16,59 @@ Two metrics, and the distinction between them is the point:
                  reporting the two as one number loses the only distinction
                  worth having.
 
-The judge is Claude. RAGAS defaults to OpenAI and will quietly use it for
-anything it can, which would mean a second key and a second bill; both metrics
-below were chosen partly because they need only an LLM. The obvious relevance
-metric, AnswerRelevancy, needs an embeddings model as well - and Anthropic
-does not sell one, so it would have pulled OpenAI back in through the side
-door no matter what the judge was set to.
+The judge is whichever provider RAG_PROVIDER names - the model it runs comes
+from pipeline.rag.providers.spec_for, the same lookup the answering chain
+uses. RAGAS defaults to OpenAI and will quietly use it for anything it can,
+which would mean a second key and a second bill; both metrics below were
+chosen partly because they need only an LLM, regardless of which provider
+supplies it.
+
+The judge does not, however, build its model through
+pipeline.rag.providers.build_chat_model the way the answering chain does.
+That function returns a LangChain chat model, and this project's ragas
+version (0.4.3) only accepts that shape for metrics it has since deprecated.
+The two metrics used here - ragas.metrics.collections.Faithfulness and
+RubricsScoreWithoutReference - are the current, non-deprecated ones, and they
+require a modern InstructorLLM wrapping a *raw* provider SDK client
+(anthropic.AsyncAnthropic, google.genai.Client, openai.AsyncOpenAI), patched
+by the instructor library - confirmed live rather than assumed, see the
+task 4 report for the transcript of a LangChain model building without error
+and then failing at Faithfulness(llm=...) with "Collections metrics only
+support modern InstructorLLM".
+
+ragas.llms.llm_factory does this same patching, and was the first thing
+tried, but it routes Gemini through instructor.from_genai() without the
+use_async=True flag that provider needs (Anthropic and OpenAI don't need the
+flag - an Async* client is enough for instructor to detect on its own) - so a
+Gemini judge built through llm_factory silently comes back synchronous, and
+every metric's .score() (async-only under the hood) fails the same way as
+the LangChain shape did. Also confirmed live, also in the task 4 report.
+build_judge patches the client itself instead, picking the provider the same
+way providers.py does.
+
+Reaching OpenAI through a second door was the real risk this used to guard
+against with an Anthropic-only judge: RAGAS's usual relevance metric works by
+embedding the answer to compare it, and neither Anthropic nor Gemini sells an
+embeddings API in the same first-party way OpenAI's client offers here - so
+choosing that metric would pull the OpenAI client back in no matter what the
+judge is set to. Both metrics used here need only a language model, and a
+test asserts that by inspecting their signatures rather than by reading the
+setting.
 """
 
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-import anthropic
 import psycopg2
 from psycopg2.extras import execute_values
-from ragas.llms import llm_factory
 from ragas.metrics.collections import Faithfulness, RubricsScoreWithoutReference
 
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError, LoadError
 from pipeline.logger import get_logger
-
-JUDGE_MODEL = "claude-opus-5"
+from pipeline.rag import providers
 
 # - The judge writes a short structured verdict, not prose. This is a ceiling
 #   against a runaway response, not a target.
@@ -119,28 +149,102 @@ CREATE INDEX IF NOT EXISTS idx_rag_evaluations_question
 """
 
 
+def _instructor_client(config: Config, spec: providers.ProviderSpec):
+    """A patched, async-capable instructor client for the configured provider.
+
+    Not providers.build_chat_model: that returns a LangChain chat model, and
+    instructor patches a raw provider SDK client (anthropic.AsyncAnthropic,
+    google.genai.Client, openai.AsyncOpenAI) - a LangChain object does not
+    have the shape it patches.
+
+    Not ragas.llms.llm_factory either, though that was the first attempt: it
+    delegates this same patching to
+    ragas.llms.adapters.instructor._get_instructor_client, which for Anthropic
+    and OpenAI is fine - passing an Async* client is enough for instructor to
+    auto-detect and return an AsyncInstructor - but for Gemini it calls
+    instructor.from_genai(client) with no use_async flag, which defaults to
+    False and returns a synchronous client regardless of what client object
+    was passed in. ragas.metrics.collections' async-only .ascore() path (used
+    by every metric's .score()) then raises "Cannot use agenerate() with a
+    synchronous client" on every call - confirmed live against a real
+    GOOGLE_API_KEY, see the task 4 report for the transcript. Patching here
+    directly, with use_async=True added for Gemini, is the one-line difference
+    that makes the default provider actually work; done for all three so the
+    construction path is the same regardless of which one is configured.
+    """
+    import instructor
+
+    # - The key-presence check itself (is it set, if not raise naming it) is
+    #   the one piece of this that used to be duplicated verbatim against
+    #   providers.build_chat_model's own three branches - same message, two
+    #   files. require_key is that check, shared; client construction still
+    #   differs genuinely per provider and stays three branches for that.
+    key = providers.require_key(config, spec)
+
+    if spec.name == "anthropic":
+        from anthropic import AsyncAnthropic
+
+        return instructor.from_anthropic(AsyncAnthropic(api_key=key))
+
+    if spec.name == "gemini":
+        from google import genai
+
+        return instructor.from_genai(genai.Client(api_key=key), use_async=True)
+
+    if spec.name == "openai":
+        from openai import AsyncOpenAI
+
+        # - Mode.JSON, matching ragas's own adapter: OpenAI's tool-call mode
+        #   (the instructor default) returns empty objects for Dict-typed
+        #   fields in the response schema.
+        return instructor.from_openai(AsyncOpenAI(api_key=key), mode=instructor.Mode.JSON)
+
+    raise ConfigError(f"no judge client builder for provider {spec.name!r}")  # pragma: no cover
+
+
 def build_judge(config: Config):
-    """The judge, on Claude, with no OpenAI anywhere in the path."""
-    if not config.anthropic_api_key:
-        raise ConfigError("ANTHROPIC_API_KEY is required to evaluate answers")
-    return llm_factory(
-        JUDGE_MODEL,
-        provider="anthropic",
-        client=anthropic.Anthropic(api_key=config.anthropic_api_key),
-        max_tokens=JUDGE_MAX_TOKENS,
+    """The judge, on whichever provider is configured, with no OpenAI anywhere in the path."""
+    from ragas.llms import InstructorLLM
+
+    spec = providers.spec_for(config)
+    client = _instructor_client(config, spec)
+    # - provider=spec.name passes "gemini" here, not instructor's own "google"
+    #   label - so InstructorLLM's internal _map_provider_params takes a
+    #   pass-through branch instead of its intended generation_config-wrapping
+    #   branch for Google. This works today only because instructor's own
+    #   genai handler performs an equivalent remapping itself - confirmed live
+    #   by observing max_tokens correctly reaching model_args. Fragile but
+    #   working; worth knowing before "cleaning up" the provider string.
+    return InstructorLLM(
+        client=client, model=spec.model, provider=spec.name, max_tokens=JUDGE_MAX_TOKENS
     )
 
 
-def build_metrics(judge) -> dict:
-    """Faithfulness and relevance, both LLM-only.
+def build_metrics(config: Config) -> dict:
+    """Faithfulness and relevance, both LLM-only, each on its own client.
 
     Neither takes an embeddings model. That is the constraint that keeps the
     judge honest: RAGAS' usual relevance metric embeds the answer to compare
-    it, and there is no Anthropic embeddings API for it to use.
+    it, and neither Anthropic nor Gemini sells an embeddings API the same
+    first-party way OpenAI's client does.
+
+    Takes config and builds two independent judges rather than one shared
+    one, even though both would otherwise be identical: Evaluator.score()
+    runs the two metrics concurrently, each in its own thread with its own
+    asyncio.run() event loop, and a single client would mean both threads
+    driving the same httpx/httpcore async connection pool. httpcore's own
+    source documents that pool as unsynchronized in the async case
+    (AsyncThreadLock is a no-op there - it assumes single-loop, cooperative
+    concurrency only) with per-connection locks that bind lazily to whichever
+    event loop first touches them and persist across keep-alive reuse -
+    exactly the shape that lets a connection opened by one thread's loop get
+    handed to the other thread's still-live loop. Two clients means two
+    pools with nothing between them to race on, which is cheaper to reason
+    about than trying to prove the sharing is safe.
     """
     return {
-        "faithfulness": Faithfulness(llm=judge),
-        "relevance": RubricsScoreWithoutReference(llm=judge, rubrics=RELEVANCE_RUBRIC),
+        "faithfulness": Faithfulness(llm=build_judge(config)),
+        "relevance": RubricsScoreWithoutReference(llm=build_judge(config), rubrics=RELEVANCE_RUBRIC),
     }
 
 
@@ -168,7 +272,7 @@ class Evaluator:
         # - Built on first use rather than in __init__, so an Evaluator can be
         #   constructed to read scores back without needing a key to do it.
         if self._metrics is None:
-            self._metrics = build_metrics(build_judge(self.config))
+            self._metrics = build_metrics(self.config)
         return self._metrics
 
     def connect(self) -> None:
@@ -193,37 +297,58 @@ class Evaluator:
             cur.execute(CREATE_TABLE)
         self.conn.commit()
 
-    def score(self, question: str, answer: str, context: dict) -> dict:
-        """Both metrics, with a failed one recorded as unknown rather than zero.
+    def _score_one(self, name: str, metric, question: str, answer: str, passages: list[str]):
+        """One metric's score, or None with a warning logged.
 
         A metric that could not run is an outage, not a bad answer. Writing a
         zero would be indistinguishable from a hallucination in every average
         drawn from this table afterwards.
         """
+        try:
+            # - Both take the same three arguments, which is not an
+            #   accident: metrics needing anything more than the question,
+            #   the answer and the context were ruled out for dragging an
+            #   embeddings model in with them.
+            result = metric.score(
+                user_input=question, response=answer, retrieved_contexts=passages
+            )
+            return float(result.value)
+        except Exception as exc:
+            # - Broad on purpose, same reasoning as the extractors: one
+            #   metric failing should not cost the other one's score, and
+            #   the judge is a network call to somebody else's service.
+            self.log.warning(
+                "metric failed",
+                extra={"context": {"metric": name, "error": str(exc)}},
+            )
+            return None
+
+    def score(self, question: str, answer: str, context: dict) -> dict:
+        """Both metrics, run concurrently.
+
+        metric.score() is ragas's own sync wrapper - it opens and closes its
+        own event loop per call (asyncio.run(self.ascore(...))) and refuses
+        outright if one is already running, so this can't be a plain
+        asyncio.gather over the two calls without making this whole method
+        (and its callers, up through main()'s per-question loop) async for a
+        benefit that stays local to this one function. A thread each does
+        the same job with no such change: each thread gets its own event
+        loop, faithfulness and relevance are otherwise independent - neither
+        reads the other's result - and the two real LLM round trips this
+        makes are what evaluate() actually waits on, so running them
+        concurrently roughly halves it rather than shaving something minor.
+        """
         passages = context_passages(context)
-        scores: dict[str, float | None] = {}
 
-        for name, metric in self.metrics.items():
-            try:
-                # - Both take the same three arguments, which is not an
-                #   accident: metrics needing anything more than the question,
-                #   the answer and the context were ruled out for dragging an
-                #   embeddings model in with them.
-                result = metric.score(
-                    user_input=question, response=answer, retrieved_contexts=passages
-                )
-                scores[name] = float(result.value)
-            except Exception as exc:
-                # - Broad on purpose, same reasoning as the extractors: one
-                #   metric failing should not cost the other one's score, and
-                #   the judge is a network call to somebody else's service.
-                self.log.warning(
-                    "metric failed",
-                    extra={"context": {"metric": name, "error": str(exc)}},
-                )
-                scores[name] = None
-
-        return scores
+        # - max(..., 1): ThreadPoolExecutor raises ValueError on max_workers=0,
+        #   which self.metrics being empty would otherwise hit before the loop
+        #   below ever got a chance to return {} on its own.
+        with ThreadPoolExecutor(max_workers=max(len(self.metrics), 1)) as pool:
+            futures = {
+                name: pool.submit(self._score_one, name, metric, question, answer, passages)
+                for name, metric in self.metrics.items()
+            }
+            return {name: future.result() for name, future in futures.items()}
 
     def evaluate(self, question: str, answer: dict, context: dict, question_id=None) -> dict:
         """Score one answered question and return the row that would be stored."""
@@ -242,7 +367,7 @@ class Evaluator:
             "faithfulness": faithfulness,
             "relevance": scores.get("relevance"),
             "hallucination": hallucination,
-            "judge_model": JUDGE_MODEL,
+            "judge_model": providers.spec_for(self.config).model,
             "answer_model": answer.get("answer_model", "unknown"),
             "latency_ms": answer.get("latency_ms"),
             "evaluated_at": datetime.now(timezone.utc),
@@ -281,7 +406,6 @@ class Evaluator:
 
 def main() -> int:
     """Answer the fixed question set, score it, and write the scores down."""
-    from pipeline.rag.chain import MODEL as ANSWER_MODEL
     from pipeline.rag.chain import AnswerChain
     from pipeline.rag.questions import QUESTIONS
     from pipeline.rag.retriever import WarehouseRetriever
@@ -296,14 +420,13 @@ def main() -> int:
         evaluator.connect()
         evaluator.create_table()
 
-        chain = AnswerChain(retriever)
+        chain = AnswerChain(retriever, config)
         rows = []
         for question in QUESTIONS:
             # - The context the answer actually used, not a second retrieval of
             #   it. Asking again would score the answer against evidence it
             #   never saw if a snapshot landed mid-run.
             answer, context = chain.answer_and_context(question["question"])
-            answer["answer_model"] = ANSWER_MODEL
             rows.append(
                 evaluator.evaluate(
                     question["question"],

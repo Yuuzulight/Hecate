@@ -17,18 +17,13 @@ import json
 import time
 from typing import Literal
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from pipeline import metrics
 from pipeline.exceptions import HecateError
 from pipeline.logger import get_logger
-
-# - The current Opus. Named here rather than in Config because changing it is a
-#   deliberate act with an evaluation attached (#46), not per-deployment
-#   configuration.
-MODEL = "claude-opus-5"
+from pipeline.rag import providers
 
 # - The scope asked for temperature 0.2, on the reasoning that a higher one
 #   invites the model to fill gaps in the context with things that sound right.
@@ -41,21 +36,15 @@ MODEL = "claude-opus-5"
 #   field the model has to commit to, and every cited id checked against the
 #   context before it reaches the caller. Pin an older model if the literal
 #   parameter is ever wanted back - it is one line, and it costs the newer
-#   model's grounding.
+#   model's grounding. EFFORT only affects the Anthropic branch (see
+#   providers.build_chat_model) - it is silently ignored on the other two
+#   providers.
 EFFORT = "medium"
 
 # - A cap rather than a target. Thinking is on by default on this model and
 #   counts against the same budget, so a tight ceiling truncates the answer
 #   rather than the reasoning.
 MAX_TOKENS = 16000
-
-# - Published per-million-token prices for this model, used to turn the token
-#   counts the API reports into a number somebody can look at. Approximate by
-#   construction: it is our arithmetic, not the invoice, and it is wrong the
-#   day pricing changes. Better than the alternative, which was a cost panel
-#   with nothing behind it.
-PRICE_PER_MTOK_INPUT = 5.00
-PRICE_PER_MTOK_OUTPUT = 25.00
 
 SYSTEM_PROMPT = """You answer questions about a repository-intelligence dataset.
 
@@ -121,40 +110,15 @@ class GroundedAnswer(BaseModel):
     sources: Sources
 
 
-def build_chat_model() -> ChatAnthropic:
-    """The model itself, before anything is bound to it.
-
-    Split out so the wiring can be asserted directly. Once structured output
-    is attached the model is buried inside a runnable graph, and a test that
-    has to walk that graph is testing LangChain rather than this.
-    """
-    return ChatAnthropic(
-        model=MODEL,
-        max_tokens=MAX_TOKENS,
-        output_config={"effort": EFFORT},
-    )
-
-
-def build_model() -> object:
+def build_model(config) -> object:
     """The model, already constrained to the answer schema.
 
-    `json_schema` rather than the default `function_calling`, and that is not a
-    preference. The function-calling path forces `tool_choice`, which the API
-    rejects whenever thinking is on. langchain-anthropic guards against that,
-    but the guard reads its own `thinking` field - and on Claude Opus 5
-    thinking is on by default at the API with that field left unset, so the
-    guard does not fire, the forced choice is sent, and the request fails.
-
-    `json_schema` binds `output_config.format` instead and forces nothing. It
-    merges with the effort set below rather than replacing it: the payload
-    builder combines the constructor's output_config with the bound one.
-
-    `include_raw` because the parsed object alone has no token counts on it,
-    and without those the spend panel has nothing to draw.
+    A thin wrapper around providers.build_structured_model, kept as its own
+    function rather than inlined into AnswerChain.__init__ so the wiring can
+    still be asserted directly - tests call this without needing to build a
+    full AnswerChain first.
     """
-    return build_chat_model().with_structured_output(
-        GroundedAnswer, method="json_schema", include_raw=True
-    )
+    return providers.build_structured_model(config, GroundedAnswer, MAX_TOKENS, effort=EFFORT)
 
 
 def context_ids(context: dict) -> set[str]:
@@ -172,10 +136,35 @@ def context_ids(context: dict) -> set[str]:
 class AnswerChain:
     """Retrieve, ask, and hand back an answer that carries its evidence."""
 
-    def __init__(self, retriever, model=None) -> None:
+    def __init__(self, retriever, config, model=None) -> None:
         self.retriever = retriever
+        self.config = config
         self.log = get_logger("rag.chain")
-        self.model = model if model is not None else build_model()
+        self._model = model
+
+    @property
+    def model_name(self) -> str:
+        # - Read from self.config on every access rather than cached at
+        #   construction time: _record_spend already re-reads
+        #   providers.spec_for(self.config) fresh on every call for pricing,
+        #   so a cached model_name would be the one field left able to drift
+        #   from the config actually driving a given call.
+        return providers.spec_for(self.config).model
+
+    @property
+    def model(self) -> object:
+        """Built on first use rather than in __init__, the same principle
+        Evaluator.metrics already uses for the judge - so a missing provider
+        key fails the first real question rather than blocking a whole
+        long-running service from starting at all. That distinction is what
+        api.py's build_chain()/_BrokenChain used to paper over from the
+        outside; this is the same fix, moved to where the eager construction
+        actually happens, so every caller gets it for free instead of only
+        the one that remembered to wrap it.
+        """
+        if self._model is None:
+            self._model = build_model(self.config)
+        return self._model
 
     def answer(self, question: str) -> dict:
         return self.answer_and_context(question)[0]
@@ -188,9 +177,6 @@ class AnswerChain:
         landing in between would have the judge scoring the answer against
         evidence the answer never saw.
         """
-        # - Timed from before retrieval, so latency_ms is what the person
-        #   asking actually waited. Timing only the model would report a fast
-        #   number on a slow answer and hide a cold cache entirely.
         started = time.perf_counter()
         context = self.retriever.context_for(question)
 
@@ -247,8 +233,9 @@ class AnswerChain:
         if not (sent or received):
             return
 
-        cost = (sent / 1_000_000 * PRICE_PER_MTOK_INPUT
-                + received / 1_000_000 * PRICE_PER_MTOK_OUTPUT)
+        spec = providers.spec_for(self.config)
+        cost = (sent / 1_000_000 * spec.price_per_mtok_input
+                + received / 1_000_000 * spec.price_per_mtok_output)
         metrics.rag_tokens.labels(kind="input").inc(sent)
         metrics.rag_tokens.labels(kind="output").inc(received)
         metrics.rag_cost.inc(cost)
@@ -306,4 +293,5 @@ class AnswerChain:
             "confidence": result.confidence,
             "sources": {"repository_ids": cited, "blocks": blocks},
             "latency_ms": latency_ms,
+            "answer_model": self.model_name,
         }

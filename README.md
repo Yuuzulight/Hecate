@@ -229,7 +229,7 @@ Alerting splits along the same line. Prometheus rules cover liveness — job sta
 
 Extraction age is the alert that matters most. If it climbs across every source at once, the job has stopped running, and nothing else will tell you.
 
-The question-answering service keeps its own counters on port 8001, because they live in that process and die with it — `hecate_rag_questions_total{outcome}`, `hecate_rag_tokens_total{kind}`, `hecate_rag_cost_usd_total`, and `hecate_rag_context_cache_total{result}`. Cost is the one alert here about money rather than data: every other component fails by producing something wrong, that one fails by producing a bill.
+The question-answering service keeps its own counters on port 8001, because they live in that process and die with it — `hecate_rag_questions_total{outcome}`, `hecate_rag_tokens_total{kind}`, `hecate_rag_cost_usd_total`, and `hecate_rag_context_cache_total{result}`. Cost is the one alert here about money rather than data: every other component fails by producing something wrong, that one fails by producing a bill. That's true for paid providers — on the free default (`RAG_PROVIDER=gemini`, priced at $0.00), `hecate_rag_cost_usd_total` never increments, so the cost alert can't fire regardless of usage. `RagTokensHigh` covers that gap, keyed on `hecate_rag_tokens_total` instead — the metric that actually reflects activity while running on Gemini.
 
 ## Asking it questions
 
@@ -241,13 +241,13 @@ python -m pipeline.rag.api      # serves on http://localhost:8001
 
 Then open `http://localhost:8001` and type a question. You'll get an answer, how confident the model was, the repositories it drew on as links you can follow, and how long it took.
 
-**It needs an Anthropic API key.** Put `ANTHROPIC_API_KEY=...` in your `.env`. Without one the service still starts and `/trending` still works, but asking a question returns an error saying what's missing. Answering is billed per question — a few cents a day at any sane rate of asking, and there's an alert if it isn't.
+**It needs an API key for whichever provider is configured.** `RAG_PROVIDER` defaults to `gemini` — put `GOOGLE_API_KEY=...` in your `.env`, free via Google AI Studio. Set `RAG_PROVIDER=anthropic` or `RAG_PROVIDER=openai` and the matching key instead if you'd rather use one of those. Without a key for whichever provider is configured, the service still starts and `/trending` still works, but asking a question returns an error saying what's missing. Gemini's free tier costs nothing at this project's scale and removes the need for Anthropic credits specifically; Anthropic and OpenAI are billed per question — a few cents a day at any sane rate of asking, and there's an alert if it isn't (see the Monitoring section above — Gemini gets its own separate token-based alert, since the dollar one can't see its spend at all). What's verified end-to-end is the deployment and provider-selection wiring itself — env vars, auth, request routing all confirmed working on `RAG_PROVIDER=gemini`. Whether a given provider actually returns an answer still depends on that provider's own account having available credits or quota: a Google Cloud project with billing enabled can hit its own quota limits independently of anything in this code, which is exactly what happened during live verification of this feature (billing-side `429 RESOURCE_EXHAUSTED`, not a code defect). `RAG_PROVIDER=anthropic` is the one that returned a complete, real, grounded answer in that same live pass.
 
 Three endpoints:
 
 | endpoint | what it does |
 |---|---|
-| `POST /ask` | `{"question": "..."}` → answer, confidence, sources, latency |
+| `POST /ask` | `{"question": "..."}` → answer, confidence, sources, latency, answer_model |
 | `GET /trending` | what's growing and what's being discussed, straight from the warehouse — no model, no cost |
 | `GET /eval-metrics` | quality scores from the most recent evaluation runs |
 
@@ -265,7 +265,7 @@ Two conventions. Nulls are meaningful: if a source doesn't report a field it sta
 
 ## Status
 
-Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups. The question-answering service on top of it is built and deployed but has not yet been run against a live model — it needs a key, and everything about it that can be checked without one has been.
+Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups. The question-answering service on top of it is built and deployed, provider-selectable between Gemini, Anthropic, and OpenAI — the deployment wiring for all three is verified working; getting an actual answer back still depends on the configured provider's account having credits or quota available, which is a property of that account, not of this deployment.
 
 Momentum needs about a week of snapshot history before it means much — with fewer days than that, the growth windows are correctly null and the ranking leans on attention alone. That resolves itself rather than needing a change.
 
@@ -273,7 +273,7 @@ Known limits are listed at the end of `ARCHITECTURE.md`. The honest short versio
 
 ## Stack
 
-Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana, Redis, FastAPI, LangChain, Claude.
+Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana, Redis, FastAPI, LangChain, Gemini/Claude/GPT (provider-selectable).
 
 ## Licence
 

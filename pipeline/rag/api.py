@@ -282,7 +282,12 @@ def main() -> int:
     retriever = WarehouseRetriever(config)
     retriever.connect()
 
-    app = build_app(config, chain=AnswerChain(retriever), retriever=retriever)
+    # - AnswerChain builds its model lazily (on first .answer() call, not
+    #   here), so a missing provider key doesn't stop the process from
+    #   starting - /health and /trending never touch app.state.chain at all,
+    #   and /ask's existing `except HecateError` below catches the deferred
+    #   ConfigError on first use, same as any other chain failure.
+    app = build_app(config, chain=AnswerChain(retriever, config), retriever=retriever)
     log.info(
         "rag api listening",
         extra={"context": {"port": PORT, "rag_enabled": config.rag_enabled}},

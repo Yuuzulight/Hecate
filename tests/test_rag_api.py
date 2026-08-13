@@ -448,3 +448,45 @@ def test_the_service_does_not_take_the_metrics_port():
     #   one of them is ever running.
     assert PORT == 8001
     assert PORT != metrics_server.PORT
+
+
+# ---- a missing provider key costs /ask, not the whole service
+#
+# AnswerChain builds its model lazily (see tests/test_rag_chain.py for that
+# guarantee directly) - constructing it never raises, even with no key
+# configured, so main() can build the app unconditionally. This is the
+# end-to-end proof: the service actually stays up and /ask actually returns
+# a clear error, rather than the process never starting at all.
+
+
+def test_a_missing_provider_key_fails_the_request_not_the_process(monkeypatch):
+    monkeypatch.setenv("DB_PASSWORD", "secret")
+    monkeypatch.setenv("RAG_PROVIDER", "gemini")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    config = Config()
+
+    class StubRetriever:
+        def context_for(self, question, limit=10):
+            return {}
+
+        def close(self):
+            pass
+
+    from pipeline.rag.chain import AnswerChain
+
+    # - Construction itself must not raise - that's the whole guarantee.
+    chain = AnswerChain(StubRetriever(), config)
+
+    # - The app builds and /health works - it never touches app.state.chain,
+    #   so a chain with an unbuildable model doesn't stop it. (/trending is
+    #   the other endpoint that doesn't touch the chain; it's exercised
+    #   elsewhere in this file with a retriever that actually implements it.)
+    app = build_app(config, chain=chain, retriever=StubRetriever())
+    client = TestClient(app)
+    assert client.get("/health").status_code == 200
+
+    # - /ask is where the deferred ConfigError actually surfaces, with the
+    #   real message, rather than the process never having started at all.
+    response = client.post("/ask", json={"question": "what is growing?"})
+    assert response.status_code == 502
+    assert "GOOGLE_API_KEY is required for RAG_PROVIDER=gemini" in response.json()["detail"]
