@@ -47,6 +47,15 @@ def fake_config(rag_provider="anthropic", anthropic_api_key="sk-ant-test"):
     os.environ["RAG_PROVIDER"] = rag_provider
     if anthropic_api_key:
         os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+    else:
+        # - Not just "don't set it" - actively clear it. A real key already
+        #   sitting in the host environment (this machine has one) would
+        #   otherwise survive untouched, and a test built to prove "no key"
+        #   behavior would silently make a real, billed API call instead -
+        #   caught live: this exact gap let
+        #   test_a_missing_key_surfaces_on_the_first_answer_not_before spend
+        #   $0.02 on a real Anthropic call rather than raising ConfigError.
+        os.environ.pop("ANTHROPIC_API_KEY", None)
     try:
         return Config()
     finally:

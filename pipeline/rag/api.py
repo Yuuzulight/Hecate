@@ -24,10 +24,23 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from pipeline.config import Config
-from pipeline.exceptions import HecateError
+from pipeline.exceptions import HecateError, LoadError
 from pipeline.logger import get_logger
 
 PORT = 8001
+
+# - Retries on the one connection this module makes before uvicorn starts.
+#   ops/windowed-run.ps1 brings Docker up from a cold stop every day, and the
+#   cluster's own DNS is not always ready in the first few seconds after -
+#   "could not translate host name postgres.hecate.svc.cluster.local" seen
+#   live, twice, moments after a fresh start. server.py's refresh loop already
+#   treats that as routine and reconnects; this call had no such protection,
+#   so the same transient blip crashed the whole pod before it ever got a
+#   chance to serve /health, and Kubernetes' own restart-backoff (which grows:
+#   10s, then 20s, then 40s...) took far longer to recover than a DNS record
+#   that was ready to resolve within a few seconds actually warranted.
+CONNECT_RETRY_ATTEMPTS = 6
+CONNECT_RETRY_DELAY_SECONDS = 5
 
 # - Server-side, request to response, and reported in the body. One number:
 #   an internal figure that excludes the queueing and serialisation the caller
@@ -270,6 +283,27 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
     return app
 
 
+def _connect_with_retry(retriever, log) -> None:
+    """retriever.connect(), tolerating the first few seconds after a cold start.
+
+    Bounded, not a loop like server.py's - this runs once, at startup, and a
+    name that still will not resolve after a half-minute is a real outage
+    worth failing loudly on, not something to keep retrying silently forever.
+    """
+    for attempt in range(1, CONNECT_RETRY_ATTEMPTS + 1):
+        try:
+            retriever.connect()
+            return
+        except LoadError as exc:
+            if attempt == CONNECT_RETRY_ATTEMPTS:
+                raise
+            log.warning(
+                "database not reachable yet, retrying",
+                extra={"context": {"attempt": attempt, "error": str(exc)}},
+            )
+            time.sleep(CONNECT_RETRY_DELAY_SECONDS)
+
+
 def main() -> int:
     import uvicorn
 
@@ -280,7 +314,7 @@ def main() -> int:
     config = Config()
 
     retriever = WarehouseRetriever(config)
-    retriever.connect()
+    _connect_with_retry(retriever, log)
 
     # - AnswerChain builds its model lazily (on first .answer() call, not
     #   here), so a missing provider key doesn't stop the process from

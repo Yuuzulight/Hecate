@@ -490,3 +490,78 @@ def test_a_missing_provider_key_fails_the_request_not_the_process(monkeypatch):
     response = client.post("/ask", json={"question": "what is growing?"})
     assert response.status_code == 502
     assert "GOOGLE_API_KEY is required for RAG_PROVIDER=gemini" in response.json()["detail"]
+
+
+# ---- _connect_with_retry: a cold-start DNS blip is not the same as a real outage
+#
+# Seen live, twice in one session: ops/windowed-run.ps1 brings Docker up from
+# a cold stop, and postgres.hecate.svc.cluster.local does not always resolve
+# in the first few seconds after. Before this, that crashed the whole pod on
+# the one connection attempt main() makes before uvicorn ever starts.
+
+
+class StubLog:
+    def __init__(self):
+        self.warnings = []
+
+    def warning(self, message, extra=None):
+        self.warnings.append((message, extra))
+
+
+class FlakyRetriever:
+    """Fails a fixed number of times, then connects cleanly."""
+
+    def __init__(self, fail_times):
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def connect(self):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise LoadError("could not translate host name")
+
+
+def test_connect_with_retry_does_not_sleep_when_the_first_attempt_works(monkeypatch):
+    from pipeline.rag import api as api_module
+
+    sleeps = []
+    monkeypatch.setattr(api_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    retriever = FlakyRetriever(fail_times=0)
+    api_module._connect_with_retry(retriever, StubLog())
+
+    assert retriever.calls == 1
+    assert sleeps == []
+
+
+def test_connect_with_retry_recovers_from_a_transient_failure(monkeypatch):
+    from pipeline.rag import api as api_module
+
+    sleeps = []
+    monkeypatch.setattr(api_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    log = StubLog()
+
+    retriever = FlakyRetriever(fail_times=2)
+    api_module._connect_with_retry(retriever, log)
+
+    # - Connected on the third try, so two failures were tolerated and slept
+    #   through rather than raised.
+    assert retriever.calls == 3
+    assert len(sleeps) == 2
+    assert len(log.warnings) == 2
+
+
+def test_connect_with_retry_gives_up_after_the_last_attempt(monkeypatch):
+    from pipeline.rag import api as api_module
+
+    monkeypatch.setattr(api_module.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(api_module, "CONNECT_RETRY_ATTEMPTS", 3)
+
+    # - A name that still will not resolve after every attempt is a real
+    #   outage, not a cold-start blip - it must still surface, not vanish
+    #   into an infinite retry.
+    retriever = FlakyRetriever(fail_times=99)
+    with pytest.raises(LoadError):
+        api_module._connect_with_retry(retriever, StubLog())
+
+    assert retriever.calls == 3
