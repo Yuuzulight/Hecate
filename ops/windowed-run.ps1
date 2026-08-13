@@ -12,9 +12,10 @@
 # Measured end to end: about four minutes, against the two and a half hours
 # the cluster would have to stay up to catch 02:00 through 04:00 UTC.
 #
-# Writes one JSON line per run to %LOCALAPPDATA%\Hecate\run-log.jsonl. The
-# daily health check reads that rather than the cluster, so it can report on a
-# run without starting Docker again.
+# Writes one JSON line per run to ops/logs/run-log.jsonl, next to this script
+# rather than under %LOCALAPPDATA% - see the $LogFile comment below for why.
+# The daily health check reads that rather than the cluster, so it can report
+# on a run without starting Docker again.
 
 [CmdletBinding()]
 param(

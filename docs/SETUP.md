@@ -36,6 +36,16 @@ Full sequence is in the README. The parts that catch people out:
 docker save hecate:v1 | docker exec -i desktop-control-plane ctr -n k8s.io images import -
 ```
 
+**The RAG service is a separate image, built from a different stage of the same Dockerfile.** Tag it exactly as `k8s/10-rag-api.yaml` names it, or the import above lands under a name nothing references:
+
+```bash
+docker build --target rag -t ghcr.io/yuuzulight/hecate-rag:2.0.0 .
+docker save ghcr.io/yuuzulight/hecate-rag:2.0.0 | docker exec -i desktop-control-plane ctr -n k8s.io images import -
+kubectl rollout restart deploy/hecate-rag -n hecate
+```
+
+The rollout restart matters as much as the import — a running pod doesn't pick up a freshly imported image on its own, and Kubernetes won't re-pull a tag it already has cached locally just because the bytes underneath changed.
+
 **metrics-server isn't included.** The autoscaler needs it, and Docker Desktop doesn't ship it:
 
 ```bash
@@ -98,6 +108,16 @@ Set `DB_PORT=5433` in `.env`. Compose publishes on `${DB_PORT:-5432}`, so both t
 ### `ErrImageNeverPull` on the cluster
 
 The image isn't on the node. See above. Worth knowing that a *stale* image produces no error at all — the tag doesn't change between rebuilds, so an old copy keeps running and the only symptom is the pipeline collecting from fewer sources than it should. If a run reports `sources_run` lower than you expect, re-import before looking anywhere else.
+
+### A rebuilt image doesn't seem to be running anything new
+
+Check what the *live* deployment actually points at before assuming the build failed:
+
+```bash
+kubectl get deploy hecate-rag -n hecate -o jsonpath='{.spec.template.spec.containers[0].image}'
+```
+
+If that doesn't match what `k8s/10-rag-api.yaml` declares, the cluster has drifted from the manifest — a `kubectl set image` or `kubectl set env` run by hand during earlier testing and never reconciled back. Every symptom of a stale image applies, but re-importing under the *manifest's* tag does nothing, because the deployment isn't reading that tag at all. `kubectl apply -f k8s/10-rag-api.yaml` fixes the reference; a rollout restart is still needed on top to actually swap the running pod.
 
 ### HPA shows `<unknown>/70%` and never scales
 

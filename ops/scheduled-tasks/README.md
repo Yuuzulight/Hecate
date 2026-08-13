@@ -1,14 +1,14 @@
 # Scheduled task prompts
 
-Copies of the prompts driving the two scheduled checks against the running cluster. They live here so they are versioned and reviewable; the copies that actually execute sit in Claude's local config, which is not backed up by anything.
+Copies of the prompts driving the three scheduled checks against the running cluster. They live here so they are versioned and reviewable; the copies that actually execute sit in Claude's local config, which is not backed up by anything.
 
 | file | when | what it does |
 |---|---|---|
-| `hecate-daily-health.md` | daily, 13:30 | Did the day's run happen? Report gaps. |
-| `hecate-dashboard-check.md` | once, 9 Aug 2026 | First look after a run nobody triggered. |
+| `hecate-daily-health.md` | daily, ~10:15 local | Did the day's run happen? Report gaps. |
+| `hecate-dashboard-check.md` | once, 13 Aug 2026 — done | First look after a run nobody triggered. |
 | `hecate-growth-check.md` | once, 15 Aug 2026 | Whether growth and momentum mean anything yet, plus a dashboard review. |
 
-The daily one reads `%LOCALAPPDATA%\Hecate\run-log.jsonl` rather than the cluster. Docker is shut down most of the time — `../windowed-run.ps1` starts it, runs the day's jobs and stops it again — so a check that queried Kubernetes directly would report a false gap every day, having found nothing running.
+The daily one reads `ops/logs/run-log.jsonl` rather than the cluster — next to the script, not under `%LOCALAPPDATA%`, for the same reason `windowed-run.ps1` writes it there (see that script's own comment). Docker is shut down most of the time — `../windowed-run.ps1` starts it, runs the day's jobs and stops it again — so a check that queried Kubernetes directly would report a false gap every day, having found nothing running.
 
 ## These are copies, not the source
 
