@@ -33,13 +33,18 @@ PORT = 8001
 #   ops/windowed-run.ps1 brings Docker up from a cold stop every day, and the
 #   cluster's own DNS is not always ready in the first few seconds after -
 #   "could not translate host name postgres.hecate.svc.cluster.local" seen
-#   live, twice, moments after a fresh start. server.py's refresh loop already
-#   treats that as routine and reconnects; this call had no such protection,
-#   so the same transient blip crashed the whole pod before it ever got a
-#   chance to serve /health, and Kubernetes' own restart-backoff (which grows:
-#   10s, then 20s, then 40s...) took far longer to recover than a DNS record
-#   that was ready to resolve within a few seconds actually warranted.
-CONNECT_RETRY_ATTEMPTS = 6
+#   live, repeatedly, moments after a fresh start. server.py's refresh loop
+#   already treats that as routine and reconnects; this call had no such
+#   protection, so the same transient blip crashed the whole pod before it
+#   ever got a chance to serve /health, and Kubernetes' own restart-backoff
+#   (which grows: 10s, then 20s, then 40s...) took far longer to recover than
+#   the DNS record itself needed.
+#
+#   6 attempts / 30s total was the first cut and still exhausted once on a
+#   real cold start (measured live: DNS did not resolve until somewhere
+#   between 25s and 40s after the container started) - one crash-and-restart
+#   instead of zero. 12 / 60s comes from that measurement, not a guess.
+CONNECT_RETRY_ATTEMPTS = 12
 CONNECT_RETRY_DELAY_SECONDS = 5
 
 # - Server-side, request to response, and reported in the body. One number:
