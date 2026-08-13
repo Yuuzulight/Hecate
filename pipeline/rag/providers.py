@@ -26,7 +26,6 @@ from dataclasses import dataclass
 
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError
-from pipeline.rag.provider_names import PROVIDER_NAMES
 
 
 @dataclass(frozen=True)

@@ -395,6 +395,13 @@ def test_a_gemini_answer_costs_nothing():
     assert spec.price_per_mtok_input == 0.0
     assert spec.price_per_mtok_output == 0.0
 
+    # - model_name is a property read from self.config, not a value cached at
+    #   construction time - otherwise this reassignment above would leave it
+    #   reporting chain_returning()'s original anthropic model while the
+    #   price computed below already reflects gemini, a silent mismatch
+    #   between the answer_model an answer reports and what it actually cost.
+    assert chain.model_name == "gemini-3.5-flash"
+
     before_cost = counter_value(metrics.rag_cost)
 
     answer = GroundedAnswer(answer="a", confidence="high", sources=Sources())

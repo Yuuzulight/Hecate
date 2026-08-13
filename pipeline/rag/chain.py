@@ -141,7 +141,15 @@ class AnswerChain:
         self.config = config
         self.log = get_logger("rag.chain")
         self._model = model
-        self.model_name = providers.spec_for(config).model
+
+    @property
+    def model_name(self) -> str:
+        # - Read from self.config on every access rather than cached at
+        #   construction time: _record_spend already re-reads
+        #   providers.spec_for(self.config) fresh on every call for pricing,
+        #   so a cached model_name would be the one field left able to drift
+        #   from the config actually driving a given call.
+        return providers.spec_for(self.config).model
 
     @property
     def model(self) -> object:
