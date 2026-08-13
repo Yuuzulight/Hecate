@@ -10,11 +10,23 @@
 
 [CmdletBinding()]
 param(
-    # - 10:00 local. The constraint is not the hour, it is the UTC date: this
-    #   machine is UTC+8, so anything from 08:00 local onward lands on the
-    #   current UTC day, which is what captured_on is keyed on. Running before
-    #   08:00 would write to the previous UTC date and read as a missed day.
-    [string]$At = '10:00',
+    # - 03:00 local, set deliberately and against the grain of the note below.
+    #   The constraint is not the hour, it is the UTC date: this machine is
+    #   UTC+8, so anything from 08:00 local onward lands on the current UTC day,
+    #   which is what captured_on is keyed on. 03:00 local is 19:00 UTC the
+    #   PREVIOUS day, so a run at the scheduled hour writes to yesterday's date.
+    #
+    #   That on its own is survivable - every UTC date still gets exactly one
+    #   snapshot, just captured near the end of it instead of near the start.
+    #   The hazard is StartWhenAvailable below. If the machine is asleep at
+    #   03:00 the catch-up run happens after wake, which is usually after 08:00
+    #   local and therefore lands on the CURRENT UTC date. So which date a run
+    #   writes depends on whether the laptop happened to be awake overnight, and
+    #   an overnight-on day followed by an overnight-off day skips a UTC date
+    #   entirely. That gap is permanent; snapshots cannot be backfilled.
+    #
+    #   08:00 is the earliest hour that is unconditionally safe.
+    [string]$At = '03:00',
     [string]$TaskName = 'Hecate daily run'
 )
 
@@ -42,8 +54,9 @@ $action = New-ScheduledTaskAction `
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 
 # - StartWhenAvailable is the point of the whole arrangement: if the machine is
-#   off at 10:00, the run happens when it next comes on rather than being
+#   off at 03:00, the run happens when it next comes on rather than being
 #   skipped. A skipped day is a permanent hole in the snapshot history.
+#   Note this interacts badly with a pre-08:00 hour - see the $At comment.
 #
 #   The battery settings matter on a laptop - by default Windows will not start
 #   a task on battery and will stop one already running if you unplug.

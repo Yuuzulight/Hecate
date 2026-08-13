@@ -9,7 +9,7 @@ Check the Hecate dashboard after the scheduled run has done a day's work on its 
 
 Hecate is a repository-intelligence pipeline at `F:\GitHub Projects\Hecate`, on Docker Desktop's Kubernetes in namespace `hecate`.
 
-**Docker is not running most of the time, and that is intentional.** A Windows scheduled task, "Hecate daily run", fires at 10:00 local and runs `ops/windowed-run.ps1`: it starts Docker, runs collection, dbt and the backup back to back, checks a snapshot landed, and shuts Docker down again — about two and a half minutes. The Kubernetes CronJobs are suspended, because a fixed UTC time is missed more often than met on a machine that gets shut down.
+**Docker is not running most of the time, and that is intentional.** A Windows scheduled task, "Hecate daily run", fires at 03:00 local and runs `ops/windowed-run.ps1`: it starts Docker, runs collection, dbt and the backup back to back, checks a snapshot landed, and shuts Docker down again — about two and a half minutes. The Kubernetes CronJobs are suspended, because a fixed UTC time is missed more often than met on a machine that gets shut down.
 
 Everything before today was triggered by hand while it was being built. **Today is the first run nobody asked for**, which is the thing actually being tested.
 
@@ -23,7 +23,7 @@ F:\GitHub Projects\Hecate\ops\logs\run-log.jsonl
 
 One JSON line per run: `started_at`, `ok`, `snapshot_date`, `snapshot_rows`, `repositories`, `discovered`, a `jobs` array, and `error`. There is also `ops/logs/last-run.txt`, the console trace of the most recent run, which shows timings and how far it got.
 
-Confirm today's entry exists, that `ok` is true, and that `snapshot_date` is today's **UTC** date. The machine is UTC+8, so a 10:00 local run is 02:00 UTC the same day.
+Confirm today's entry exists and that `ok` is true. The machine is UTC+8, so a 03:00 local run is 19:00 UTC the **previous** day — `snapshot_date` on a run that fired at its scheduled hour is yesterday's UTC date, not today's. A catch-up run after the machine wakes lands on today's instead.
 
 If there is no entry for today, that is the finding — stop and report it. Check `last-run.txt` first, and the task's own state:
 

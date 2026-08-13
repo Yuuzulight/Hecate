@@ -28,7 +28,7 @@ Read the last few lines. Each has `started_at`, `ok`, `snapshot_date`, `snapshot
 1. **Did today's run happen, and did it work?**
    The newest entry's `started_at` should be today. `ok` is true only when every job completed *and* a snapshot exists for the current UTC date — a run can have all jobs succeed and still not be `ok`, which is the case worth catching.
 
-2. **Any gaps?** Walk the `snapshot_date` values across recent entries. A date missing from the sequence is the headline. `snapshot_date` is a UTC date; the machine is UTC+8, so a run any time from 08:00 local onward lands on the current UTC day.
+2. **Any gaps?** Walk the `snapshot_date` values across recent entries. A date missing from the sequence is the headline. `snapshot_date` is a UTC date and the machine is UTC+8, so the hour a run started decides which date it lands on. The task is scheduled for 03:00 local, which is 19:00 UTC the **previous** day — a run at its scheduled hour writes yesterday's UTC date. A catch-up run after the machine wakes is usually past 08:00 local and writes the current one. Either way the sequence should stay one-per-UTC-date; the failure mode to watch for is an overnight-on day followed by an overnight-off day, which skips a UTC date outright.
 
 3. **Did any job fail?** Check the `jobs` array. `detail` says `complete`, `failed (n attempts)`, or `still running after Ns`.
 
