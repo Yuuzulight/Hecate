@@ -255,6 +255,28 @@ The answer is built from SQL against the analytics models, not a similarity sear
 
 `RAG_ENABLED=0` turns answering off without touching anything else — useful if a bill starts moving. `/trending` keeps working.
 
+## Real-time ingestion
+
+npm publishes and Hacker News posts about tracked (or discoverable) projects
+show up within seconds, not the next day's batch — the only two of Hecate's
+six sources that genuinely support this without requiring a relationship
+with the source Hecate doesn't have (see `docs/specs/2026-08-14-realtime-
+ingestion-design.md` for why GitHub, GitLab, and PyPI stay batch).
+
+Two always-on Windows services (`ops/realtime/`) listen continuously and
+publish into a small, separate, always-on Redis instance (Memurai, since
+plain Redis has no first-party Windows build) — independent of the daily
+windowed cluster, which stays off most of the day exactly as before. The
+daily batch drains what was captured into the same `raw_repositories`/
+`social_mentions` tables everything else lands in — no separate schema.
+
+```bash
+powershell -ExecutionPolicy Bypass -File ops/realtime/install-realtime-services.ps1
+```
+
+Then connect to `ws://localhost:8001/live` (with the RAG API running) to see
+events as they're captured.
+
 ## Contributing
 
 Open an issue before anything substantial, and keep pull requests to one thing.
