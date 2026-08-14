@@ -7,6 +7,8 @@ it was asked. A test that read the 503 out of the response body would pass
 just as happily against a flag that called Claude and threw the answer away.
 """
 
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -587,6 +589,14 @@ class FakeRedisForLive:
         #   other on what counts as "new" instead of re-resolving to a later
         #   and later tail.
         self._dollar_cutoff = {}
+        # - Set once the route's background thread has made its first read
+        #   call, so a test can publish only after the "$" cutoff above is
+        #   actually established, instead of racing it with a fixed sleep -
+        #   publishing before the first read would make the fake capture a
+        #   cutoff past the new entry, and the route would never see it,
+        #   hanging the test on a receive_json() call this starlette version
+        #   gives no timeout for.
+        self.first_read_done = threading.Event()
 
     def xadd(self, stream, fields):
         self._seq += 1
@@ -605,13 +615,11 @@ class FakeRedisForLive:
                 new = [(eid, f) for eid, f in entries if eid > last_id]
             if new:
                 result.append((stream, new))
+        self.first_read_done.set()
         return result
 
 
 def test_live_websocket_streams_a_published_event(config):
-    import threading
-    import time as time_module
-
     from pipeline.realtime.bus import EventBus
     from pipeline.realtime.npm_listener import NPM_STREAM
 
@@ -621,20 +629,24 @@ def test_live_websocket_streams_a_published_event(config):
     client, _, _ = make_client(config, realtime_bus=bus)
 
     with client.websocket_connect("/live") as websocket:
-        # - Published only after the socket is connected, from a background
-        #   thread with a short delay - TestClient's websocket_connect runs
-        #   the app in its own thread, so the route's first xread (which
-        #   resolves "$" against a stream that is still empty at that point)
-        #   has already happened by the time this fires. That is what makes
-        #   this exercise "push a new event to an already-connected client"
-        #   for real, rather than passing only because the fake used to
-        #   replay history on connect - the route's own docstring says there
-        #   is no such replay.
-        def publish_after_connect():
-            time_module.sleep(0.05)
+        # - Waits for the route's first xread before publishing, rather than
+        #   racing it with a fixed sleep - publishing before that first read
+        #   would make the fake's "$" cutoff land past the new entry, and
+        #   the route would never see it, hanging receive_json() below
+        #   (this starlette version gives it no timeout). Waiting on the
+        #   event makes the ordering deterministic instead of merely
+        #   probable, and is what makes this exercise "push a new event to
+        #   an already-connected client" for real, rather than passing only
+        #   because the fake used to replay history on connect - the
+        #   route's own docstring says there is no such replay.
+        assert bus.client.first_read_done.wait(timeout=5), (
+            "route never made its first read - fixture or route wiring broke"
+        )
+
+        def publish_after_first_read():
             bus.client.xadd(NPM_STREAM, {"data": '{"id": "npm_left-pad", "name": "left-pad"}'})
 
-        threading.Thread(target=publish_after_connect, daemon=True).start()
+        threading.Thread(target=publish_after_first_read, daemon=True).start()
 
         message = websocket.receive_json()
         assert message["stream"] == "npm"

@@ -57,6 +57,12 @@ function Install-ListenerService {
     nssm set $Name AppStderr $LogFile
     nssm set $Name AppRotateFiles 1
     nssm set $Name AppRotateBytes 10485760
+    # - NSSM only rotates at service start by default. These services are
+    #   designed to never exit (AppExit Default Restart above), so without
+    #   this the rotate settings above are silently inert for a listener
+    #   that just keeps running - AppRotateOnline is what actually rotates
+    #   the file while the service stays up.
+    nssm set $Name AppRotateOnline 1
 
     nssm start $Name
 

@@ -54,5 +54,21 @@ fail every connection to Memurai from inside the cluster - the listeners
 will keep publishing into Memurai just fine in the meantime, since they
 run directly on the host, not from a pod.
 
+Widening `bind` alone is not enough to finish the job - two more things
+sit behind the same default:
+
+- **`protected-mode`** defaults to `yes` in `memurai.conf`, and with no
+  password set that rejects any client that isn't on loopback regardless
+  of what `bind` allows - the same protection Redis itself ships with.
+  Either set a password (`requirepass`) or explicitly turn this off once
+  `bind` is widened; leaving it on makes the `bind` change alone silently
+  not work, which reads exactly like "still can't connect" and is easy to
+  mistake for the wrong problem.
+- **Windows Firewall** blocks inbound connections to 6380 by default for
+  a manually-installed service the way it wouldn't for something that
+  registered its own firewall rule at install time. An inbound allow rule
+  for TCP 6380 (scoped to the Docker Desktop virtual network if possible,
+  not "any") is needed alongside the `bind`/`protected-mode` changes.
+
 This is a required manual step, on the real machine, before the drain
 step or `/live` can actually reach Memurai from inside K8s.
