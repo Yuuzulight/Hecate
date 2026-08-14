@@ -11,13 +11,15 @@ one of them is running.
     python -m pipeline.rag.api
 """
 
+import asyncio
+import json
 import sys
 import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -26,6 +28,9 @@ from pydantic import BaseModel, Field
 from pipeline.config import Config
 from pipeline.exceptions import HecateError, LoadError
 from pipeline.logger import get_logger
+from pipeline.realtime.bus import EventBus
+from pipeline.realtime.hn_listener import HN_STREAM
+from pipeline.realtime.npm_listener import NPM_STREAM
 
 PORT = 8001
 
@@ -116,7 +121,7 @@ def client_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def build_app(config: Config, *, chain, retriever) -> FastAPI:
+def build_app(config: Config, *, chain, retriever, realtime_bus: EventBus | None = None) -> FastAPI:
     """The application, with its dependencies handed in rather than imported.
 
     Tests pass stubs; `main()` passes the real thing. The alternative - module
@@ -141,6 +146,7 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
     app.state.config = config
     app.state.chain = chain
     app.state.retriever = retriever
+    app.state.realtime_bus = realtime_bus if realtime_bus is not None else EventBus(config.redis_realtime_url)
 
     # - Registered, not merely imported. The original scope imported the
     #   middleware and never added it, which is invisible until a browser on
@@ -255,6 +261,47 @@ def build_app(config: Config, *, chain, retriever) -> FastAPI:
         except HecateError as exc:
             log.error("trending failed", extra={"context": {"error": str(exc)}})
             raise HTTPException(status_code=503, detail=f"warehouse unavailable: {exc}") from exc
+
+    @app.websocket("/live")
+    async def live(websocket: WebSocket) -> None:
+        """Pushes real-time npm/HN events as they land on the bus.
+
+        Reads the always-on Redis Streams directly - deliberately not
+        through Postgres, so this works whether or not the daily batch has
+        drained anything yet. A connection here sees only what happens
+        while it's open; there is no history replay on connect, since
+        XREAD's blocking-read mode (rather than a consumer group) is what
+        lets many simultaneous viewers share one read position each without
+        stepping on each other's acknowledgment state the way the drain
+        step's consumer group does.
+        """
+        await websocket.accept()
+        bus = app.state.realtime_bus
+        if bus.client is None:
+            await websocket.close()
+            return
+
+        last_ids = {NPM_STREAM: "$", HN_STREAM: "$"}
+        try:
+            while True:
+                try:
+                    # - Run the blocking redis call in a thread pool to avoid
+                    #   blocking the async event loop.
+                    result = await asyncio.to_thread(
+                        bus.client.xread, last_ids, count=50, block=5000
+                    )
+                except Exception:
+                    await asyncio.sleep(1)
+                    continue
+                for stream, entries in result:
+                    for entry_id, fields in entries:
+                        last_ids[stream] = entry_id
+                        await websocket.send_json({
+                            "stream": "npm" if stream == NPM_STREAM else "hn",
+                            "event": json.loads(fields["data"]),
+                        })
+        except WebSocketDisconnect:
+            pass
 
     @app.get("/eval-metrics")
     def eval_metrics(limit: int = 50) -> dict:

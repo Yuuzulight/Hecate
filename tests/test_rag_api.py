@@ -88,10 +88,13 @@ def config(monkeypatch):
     return Config()
 
 
-def make_client(config, chain=None, retriever=None):
+def make_client(config, chain=None, retriever=None, realtime_bus=None):
     chain = chain if chain is not None else StubChain()
     retriever = retriever if retriever is not None else StubRetriever()
-    app = build_app(config, chain=chain, retriever=retriever)
+    if realtime_bus is not None:
+        app = build_app(config, chain=chain, retriever=retriever, realtime_bus=realtime_bus)
+    else:
+        app = build_app(config, chain=chain, retriever=retriever)
     return TestClient(app), chain, retriever
 
 
@@ -565,3 +568,58 @@ def test_connect_with_retry_gives_up_after_the_last_attempt(monkeypatch):
         api_module._connect_with_retry(retriever, StubLog())
 
     assert retriever.calls == 3
+
+
+# ---- WebSocket /live streaming real-time events
+
+
+def test_live_websocket_streams_a_published_event(config):
+    from pipeline.realtime.bus import EventBus
+    from pipeline.realtime.npm_listener import NPM_STREAM
+
+    class FakeRedisForLive:
+        def __init__(self):
+            self.streams = {}
+            self._seq = 0
+
+        def xadd(self, stream, fields):
+            self._seq += 1
+            entry_id = f"{self._seq}-0"
+            self.streams.setdefault(stream, []).append((entry_id, fields))
+            return entry_id
+
+        def xread(self, streams, count=None, block=None):
+            result = []
+            for stream, last_id in streams.items():
+                entries = self.streams.get(stream, [])
+                # - When last_id is "$" (initial connection), return all existing entries.
+                #   On subsequent calls with a real ID, return only entries after that ID.
+                new = entries if last_id == "$" else [(eid, f) for eid, f in entries if eid > last_id]
+                if new:
+                    result.append((stream, new))
+            return result
+
+    bus = EventBus(url="")
+    bus.client = FakeRedisForLive()
+    bus.client.xadd(NPM_STREAM, {"data": '{"id": "npm_left-pad", "name": "left-pad"}'})
+
+    client, _, _ = make_client(config, realtime_bus=bus)
+
+    with client.websocket_connect("/live") as websocket:
+        message = websocket.receive_json()
+        assert message["stream"] == "npm"
+        assert message["event"]["id"] == "npm_left-pad"
+
+
+def test_live_websocket_with_no_bus_configured_closes_cleanly(config):
+    # - REDIS_REALTIME_URL unset is the common case. The endpoint must exist
+    #   and accept the connection, then close it, rather than the app
+    #   failing to start or the route 404ing outright.
+    from pipeline.realtime.bus import EventBus
+
+    bus = EventBus(url="")
+    client, _, _ = make_client(config, realtime_bus=bus)
+
+    with client.websocket_connect("/live") as websocket:
+        with pytest.raises(Exception):
+            websocket.receive_json()  # connection closes with nothing to send
