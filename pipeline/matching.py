@@ -17,6 +17,9 @@ tools/measure_name_matching.py.
 
 import re
 
+from pipeline.loader import PostgreSQLLoader
+from pipeline.logger import get_logger
+
 # - Below this, a name is too generic to carry meaning on its own. Rules out
 #   go, id, ai, ml and npm in one stroke.
 #
@@ -108,3 +111,34 @@ def resolve_by_name(text: str, names: dict[str, str]) -> str | None:
     """
     candidates = name_candidates(text, names)
     return candidates.pop() if len(candidates) == 1 else None
+
+
+def resolve(loader: PostgreSQLLoader, mentions: list[dict]) -> list[dict]:
+    """Attach a repository id to each mention where one is known.
+
+    Mentions that match nothing are kept with a null id rather than dropped.
+    Most of Hacker News is about something we don't track, and that is the part
+    worth reading rather than the part to discard.
+    """
+    log = get_logger("main")
+    found = loader.resolve_urls({m["target_url"] for m in mentions})
+
+    # - Annotates rather than filters. An unmatched mention is kept with a null
+    #   repository_id, because a project being talked about before it is
+    #   tracked is the signal, not noise to be thrown away.
+    annotated = [
+        {**mention, "repository_id": found.get(mention["target_url"])}
+        for mention in mentions
+    ]
+
+    # - A link is certain. Anything below that came from prose.
+    for mention in annotated:
+        if mention["repository_id"]:
+            mention["match_confidence"] = 1.0
+
+    matched = sum(1 for m in annotated if m["repository_id"])
+    log.info(
+        "mentions resolved",
+        extra={"context": {"matched": matched, "of": len(annotated)}},
+    )
+    return annotated
