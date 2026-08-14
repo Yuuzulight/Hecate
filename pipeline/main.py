@@ -23,6 +23,8 @@ from pipeline.extractors import (
 from pipeline.loader import PostgreSQLLoader
 from pipeline.logger import get_logger
 from pipeline.matching import resolve, resolve_by_name
+from pipeline.realtime.bus import EventBus
+from pipeline.realtime.drain import drain
 from pipeline.transformer import RepositoryTransformer
 
 EXTRACTORS = (GitHubExtractor, NpmExtractor, PyPiExtractor, GitLabExtractor)
@@ -167,6 +169,18 @@ def run(config: Config) -> tuple[int, list[str]]:
                     extra={"context": {"source": extractor.source, "error": str(exc)}},
                 )
 
+        # - Refreshes what the always-on npm listener filters against. Here
+        #   specifically: after npm's own collection loop, so a package
+        #   found today is filterable today, and before the mention/drain
+        #   steps below, which don't depend on this ordering but keep every
+        #   real-time-related step grouped together for a reader.
+        bus = EventBus(config.redis_realtime_url)
+        try:
+            npm_ids = {row["id"] for row in loader.rows_for("npm")}
+            bus.replace_tracked_npm(npm_ids)
+        except Exception as exc:
+            log.exception("could not refresh tracked npm packages", extra={"context": {"error": str(exc)}})
+
         # - After every repository source, so links have something to match.
         mentions_ran = False
         for extractor_class in MENTION_EXTRACTORS:
@@ -202,6 +216,16 @@ def run(config: Config) -> tuple[int, list[str]]:
                     )
             except Exception as exc:
                 log.exception("discovery failed", extra={"context": {"error": str(exc)}})
+
+        # - After discovery (so newly-discovered repositories exist for
+        #   real-time HN mentions to resolve against) and before the
+        #   snapshot (so anything captured overnight counts in today's
+        #   history) - the same ordering reasoning the existing steps above
+        #   already follow.
+        try:
+            drain(bus, transformer, loader)
+        except Exception as exc:
+            log.exception("realtime drain failed", extra={"context": {"error": str(exc)}})
 
         # - Last, so it records the state everything else just produced. A
         #   failure here costs the day's history, not the day's data.
