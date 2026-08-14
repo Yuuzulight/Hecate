@@ -93,7 +93,14 @@ class EventBus:
         entries = []
         for _, items in list(pending) + list(new):
             for entry_id, fields in items:
-                entries.append((entry_id, json.loads(fields["data"])))
+                try:
+                    event = json.loads(fields["data"])
+                    entries.append((entry_id, event))
+                except (json.JSONDecodeError, ValueError) as exc:
+                    self.log.warning(
+                        "skipping malformed stream entry",
+                        extra={"context": {"stream": stream, "entry_id": entry_id, "error": str(exc)}},
+                    )
         return entries
 
     def ack(self, stream: str, group: str, entry_id: str) -> None:

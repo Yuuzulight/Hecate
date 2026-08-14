@@ -212,3 +212,23 @@ def test_the_tracked_npm_key_is_a_module_constant():
     #   reading and writing the same key, not two strings that happen to
     #   currently match.
     assert TRACKED_NPM_KEY == "hecate:tracked:npm"
+
+
+def test_malformed_json_is_skipped_without_raising(bus):
+    # - A stream entry with corrupted or malformed JSON must not crash the
+    #   caller - the bus degrades gracefully, skips the bad entry, and
+    #   continues returning the well-formed ones. This upholds the contract
+    #   that every method is a safe no-op (or empty/partial result) even
+    #   when data is corrupted, matching ContextCache's resilience.
+    bus.ensure_group("s", "g")
+    bus.publish("s", {"kind": "npm-publish", "package": "react"})
+    # Manually append a malformed entry to the stream to simulate corruption.
+    bus.client.streams.setdefault("s", []).append(("2-0", {"data": "not-valid-json{"}))
+    bus.publish("s", {"kind": "npm-publish", "package": "vue"})
+
+    entries = bus.read_pending_then_new("s", "g", "c1")
+    # Two entries were published (react and vue), but the malformed one
+    # (between them) should be skipped, leaving only the well-formed ones.
+    assert len(entries) == 2
+    assert entries[0][1]["package"] == "react"
+    assert entries[1][1]["package"] == "vue"
