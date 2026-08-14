@@ -43,6 +43,14 @@ function Install-ListenerService {
     #   logging below at exactly the moment it matters most (watching a
     #   listener that's actively failing).
     nssm install $Name $PythonExe "-u" "-m" $Module
+    # - nssm install only takes effect the first time a service is created -
+    #   on every re-run after that it fails with "already exists" and does
+    #   nothing, silently skipping Application/AppParameters. Setting them
+    #   explicitly here is what actually makes "re-running is safe, it
+    #   replaces the existing services" true for these two, the same way
+    #   every setting below already works via nssm set.
+    nssm set $Name Application $PythonExe
+    nssm set $Name AppParameters "-u -m $Module"
     nssm set $Name AppDirectory $RepoRoot
     # - Restart on any exit, including a clean one - these processes are
     #   meant to run forever; the only reason either exits is a crash inside
