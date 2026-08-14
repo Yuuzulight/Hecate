@@ -25,6 +25,36 @@ KEYWORDS = (
 )
 
 
+def registry_doc_to_row(raw: dict, source: str = "npm") -> dict:
+    """Map one full npm registry document to a raw_repositories row.
+
+    Shared between fetch_by_url (fetched by URL during discovery) and the
+    real-time listener (received from the CouchDB _changes feed) - both
+    hand this function the exact same document shape, npm's own per-package
+    registry document, just by two different paths.
+    """
+    latest = (raw.get("dist-tags") or {}).get("latest")
+    versions = raw.get("time") or {}
+    name = raw.get("name")
+
+    return {
+        "id": f"{source}_{name}",
+        "source": source,
+        "name": name,
+        "url": f"https://www.npmjs.com/package/{name}",
+        "stars": 0,
+        "forks": 0,
+        "language": None,
+        "created_at": versions.get("created"),
+        "updated_at": versions.get("modified") or versions.get(latest),
+        "description": raw.get("description"),
+        # - Downloads live on a different endpoint. Left empty rather than
+        #   guessed; the next scheduled search run fills it in.
+        "downloads": None,
+        "extracted_at": Extractor.now(),
+    }
+
+
 class NpmExtractor(Extractor):
     source = "npm"
 
@@ -64,26 +94,7 @@ class NpmExtractor(Extractor):
             raise ExtractError(f"npm: {name} returned {response.status_code}")
 
         raw = response.json()
-        latest = (raw.get("dist-tags") or {}).get("latest")
-        versions = raw.get("time") or {}
-
-        return {
-            "id": f"npm_{raw.get('name')}",
-            "source": self.source,
-            "name": raw.get("name"),
-            "url": f"https://www.npmjs.com/package/{raw.get('name')}",
-            "stars": 0,
-            "forks": 0,
-            "language": None,
-            # - The registry document does carry a creation date, unlike search.
-            "created_at": versions.get("created"),
-            "updated_at": versions.get("modified") or versions.get(latest),
-            "description": raw.get("description"),
-            # - Downloads live on a different endpoint. Left empty rather than
-            #   guessed; the next scheduled search run fills it in.
-            "downloads": None,
-            "extracted_at": self.now(),
-        }
+        return registry_doc_to_row(raw)
 
     def _search(self, keyword: str) -> list[dict]:
         params = {
