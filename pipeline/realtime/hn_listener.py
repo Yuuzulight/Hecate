@@ -24,12 +24,15 @@ import requests
 from pipeline.config import Config
 from pipeline.extractors.hackernews import canonical_repo_url
 from pipeline.logger import get_logger
-from pipeline.realtime.bus import EventBus
+from pipeline.realtime.bus import EventBus, HN_GROUP, HN_STREAM
 
 UPDATES_URL = "https://hacker-news.firebaseio.com/v0/updates.json"
 ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
-HN_STREAM = "hecate:events:hn"
-CONSUMER_GROUP = "hn-drain"
+
+# - CONSUMER_GROUP kept as an alias, not just a rename: existing importers
+#   keep working. HN_STREAM and HN_GROUP now live in
+#   pipeline/realtime/bus.py - see that module's comment for why.
+CONSUMER_GROUP = HN_GROUP
 
 UPDATES_POLL_SECONDS = 15
 REQUEST_TIMEOUT = 10

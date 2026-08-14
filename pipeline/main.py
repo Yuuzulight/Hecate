@@ -176,8 +176,12 @@ def run(config: Config) -> tuple[int, list[str]]:
         #   real-time-related step grouped together for a reader.
         bus = EventBus(config.redis_realtime_url)
         try:
-            npm_ids = {row["id"] for row in loader.rows_for("npm")}
-            bus.replace_tracked_npm(npm_ids)
+            # - Bare package names, not raw_repositories' "npm_<name>" row
+            #   ids. npm_listener.handle_change looks packages up by the
+            #   CouchDB _changes feed's own `id`, which is the bare name -
+            #   the prefixed row id would never match anything there.
+            npm_names = {row["name"] for row in loader.rows_for("npm")}
+            bus.replace_tracked_npm(npm_names)
         except Exception as exc:
             log.exception("could not refresh tracked npm packages", extra={"context": {"error": str(exc)}})
 

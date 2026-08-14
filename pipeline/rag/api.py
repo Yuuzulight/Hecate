@@ -19,6 +19,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import redis
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
@@ -28,9 +29,7 @@ from pydantic import BaseModel, Field
 from pipeline.config import Config
 from pipeline.exceptions import HecateError, LoadError
 from pipeline.logger import get_logger
-from pipeline.realtime.bus import EventBus
-from pipeline.realtime.hn_listener import HN_STREAM
-from pipeline.realtime.npm_listener import NPM_STREAM
+from pipeline.realtime.bus import EventBus, HN_STREAM, NPM_STREAM
 
 PORT = 8001
 
@@ -287,10 +286,24 @@ def build_app(config: Config, *, chain, retriever, realtime_bus: EventBus | None
                 try:
                     # - Run the blocking redis call in a thread pool to avoid
                     #   blocking the async event loop.
+                    #
+                    #   block=1000, under EventBus's own SOCKET_TIMEOUT_SECONDS
+                    #   (2s): redis-py does not widen the socket timeout for a
+                    #   blocking command, so a block value at or above it makes
+                    #   every single cycle raise redis.exceptions.TimeoutError
+                    #   instead of returning an empty result (confirmed live
+                    #   against a real Memurai instance) - previously swallowed
+                    #   by a bare except with nothing logged, so the endpoint
+                    #   looked healthy while it was actually timeout-looping
+                    #   and reconnecting every few seconds.
                     result = await asyncio.to_thread(
-                        bus.client.xread, last_ids, count=50, block=5000
+                        bus.client.xread, last_ids, count=50, block=1000
                     )
-                except Exception:
+                except redis.RedisError as exc:
+                    log.warning(
+                        "live read failed",
+                        extra={"context": {"error": str(exc)}},
+                    )
                     await asyncio.sleep(1)
                     continue
                 for stream, entries in result:

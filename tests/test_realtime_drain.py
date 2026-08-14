@@ -10,11 +10,10 @@ acked so it is not drained twice.
 """
 
 import pytest
+import redis
 
-from pipeline.realtime.bus import EventBus
+from pipeline.realtime.bus import EventBus, HN_GROUP, HN_STREAM, NPM_GROUP, NPM_STREAM
 from pipeline.realtime.drain import drain
-from pipeline.realtime.hn_listener import HN_STREAM, CONSUMER_GROUP as HN_GROUP
-from pipeline.realtime.npm_listener import NPM_STREAM, CONSUMER_GROUP as NPM_GROUP
 
 
 class StubTransformer:
@@ -65,6 +64,14 @@ class FakeRedisWithStreams:
 
     def xreadgroup(self, group, consumer, streams, count=None):
         (stream, marker), = streams.items()
+        if (stream, group) not in self.groups:
+            # - Real Redis's NOGROUP: a group that was never created (or
+            #   whose creation was skipped, e.g. by a listener starting
+            #   while Memurai was briefly down) can't be read from. This is
+            #   what proves _drain_npm/_drain_hn's own ensure_group() call
+            #   is load-bearing, rather than the test only passing because
+            #   the fake is more forgiving than real Redis.
+            raise redis.ResponseError("NOGROUP No such key or consumer group")
         entries = self.streams.get(stream, [])
         if marker == ">":
             result = [(eid, f) for eid, f in entries if eid not in self.acked]
@@ -139,6 +146,34 @@ def test_drained_entries_are_acked_so_they_are_not_processed_twice(bus):
     #   entry was acked.
     written_again = drain(bus, StubTransformer(), StubLoader())
     assert written_again == 0
+
+
+def test_drain_creates_its_own_missing_consumer_group(bus):
+    """Regression pin for Important #4: the group normally exists because
+    each listener creates it at startup, but ensure_group swallows a
+    connection error by design (so a listener starting while Memurai is
+    briefly down doesn't crash). A listener that came up during exactly
+    that window leaves no group behind - drain() must not depend on the
+    listener having gotten there first.
+
+    Unlike every other test in this file, this one does NOT call
+    bus.ensure_group() itself before seeding - the whole point is proving
+    drain() creates the group on its own rather than relying on the caller
+    to have done it already.
+    """
+    npm_row = {
+        "id": "npm_left-pad", "source": "npm", "name": "left-pad",
+        "url": "https://www.npmjs.com/package/left-pad",
+        "extracted_at": "2026-08-14T00:00:00+00:00",
+    }
+    bus.client._seed(NPM_STREAM, npm_row)
+
+    transformer = StubTransformer()
+    loader = StubLoader()
+    written = drain(bus, transformer, loader)
+
+    assert written == 1
+    assert loader.repositories_loaded == [npm_row]
 
 
 def test_both_streams_are_drained_in_one_call(bus):

@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from pipeline.extractors.npm import registry_doc_to_row
 from pipeline.realtime.bus import EventBus
 from pipeline.realtime.npm_listener import NPM_STREAM, handle_change, parse_change_line
 
@@ -102,3 +103,28 @@ def test_a_dead_bus_does_not_crash_handle_change():
     #   already covered by "untracked is skipped" behaviorally, but this
     #   confirms it explicitly rather than by inference.
     assert handle_change(b, change) is False
+
+
+def test_the_tracked_set_and_the_changes_feed_agree_on_package_identity(bus):
+    """Regression pin for the tracked-npm key format mismatch: pipeline/main.py
+    seeds the tracked set from loader.rows_for("npm")'s `name` column (a row
+    shaped by registry_doc_to_row), and this module's handle_change looks
+    packages up by the CouchDB _changes feed's own bare `id`. Both sides
+    independently agreed on "bare package name" once - this test exercises
+    them together, through the real registry_doc_to_row and the real
+    handle_change, so the two conventions cannot silently drift apart again
+    the way they did when one side used the prefixed raw_repositories id
+    instead.
+    """
+    doc = {"name": "left-pad", "description": "String left pad", "dist-tags": {}, "time": {}}
+    row = registry_doc_to_row(doc)
+
+    # What pipeline/main.py's refresh step puts into the tracked set for
+    # this package (see tests/test_integration.py's
+    # test_run_refreshes_the_tracked_npm_set_after_npm_collection).
+    bus.client.tracked.add(row["name"])
+
+    # A real CouchDB _changes feed entry for this same package.
+    change = {"id": "left-pad", "doc": doc}
+
+    assert handle_change(bus, change) is True

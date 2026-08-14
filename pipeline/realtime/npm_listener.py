@@ -27,11 +27,15 @@ import requests
 from pipeline.config import Config
 from pipeline.extractors.npm import registry_doc_to_row
 from pipeline.logger import get_logger
-from pipeline.realtime.bus import EventBus
+from pipeline.realtime.bus import EventBus, NPM_GROUP, NPM_STREAM
 
 FEED_URL = "https://replicate.npmjs.com/registry/_changes"
-NPM_STREAM = "hecate:events:npm"
-CONSUMER_GROUP = "npm-drain"
+
+# - CONSUMER_GROUP kept as an alias, not just a rename: existing importers
+#   (this module's own __main__, and anything reaching for the group name
+#   under its old local name) keep working. NPM_STREAM and NPM_GROUP now
+#   live in pipeline/realtime/bus.py - see that module's comment for why.
+CONSUMER_GROUP = NPM_GROUP
 
 # - No read timeout: this is a deliberately long-lived streaming connection,
 #   not a normal request. The connect timeout still applies, so a genuinely

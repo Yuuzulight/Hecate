@@ -232,13 +232,18 @@ def test_run_drains_the_realtime_streams(config, loader, monkeypatch):
 
 
 def test_run_refreshes_the_tracked_npm_set_after_npm_collection(config, loader, monkeypatch):
-    use(monkeypatch, fake_extractor("npm", [dict(RAW, id="npm_1", source="npm")]))
+    use(monkeypatch, fake_extractor("npm", [dict(RAW, id="npm_left-pad", source="npm", name="left-pad")]))
     # - Stands in for what loader.rows_for("npm") would return after a real
     #   run loaded these - the same method the quality checks already call,
     #   reused rather than tracked separately.
+    #
+    # - Bare names, distinct per row: this is what the npm listener's own
+    #   CouchDB _changes feed hands handle_change as `id` (see
+    #   registry_doc_to_row and tests/test_realtime_npm_listener.py), not
+    #   raw_repositories' "npm_<name>" row id.
     loader.rows_for.return_value = [
-        dict(RAW, id="npm_1", source="npm"),
-        dict(RAW, id="npm_2", source="npm"),
+        dict(RAW, id="npm_left-pad", source="npm", name="left-pad"),
+        dict(RAW, id="npm_is-thirteen", source="npm", name="is-thirteen"),
     ]
 
     refresh_calls = []
@@ -251,7 +256,7 @@ def test_run_refreshes_the_tracked_npm_set_after_npm_collection(config, loader, 
     monkeypatch.setattr(main_module, "drain", lambda bus, transformer, loader: 0)
 
     run(config)
-    assert refresh_calls == [{"npm_1", "npm_2"}]
+    assert refresh_calls == [{"left-pad", "is-thirteen"}]
 
 
 def test_a_dead_realtime_bus_does_not_fail_the_run(config, loader, monkeypatch):

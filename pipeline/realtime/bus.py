@@ -29,6 +29,16 @@ SOCKET_TIMEOUT_SECONDS = 2
 #   using the same key.
 TRACKED_NPM_KEY = "hecate:tracked:npm"
 
+# - Stream and consumer-group names for both real-time sources. Live here,
+#   not in npm_listener.py/hn_listener.py, so pipeline/rag/api.py's /live
+#   route and pipeline/realtime/drain.py can get at them without importing a
+#   listener module just for two strings - each of those drags in `requests`
+#   and that module's own `__main__` supervisor block for nothing.
+NPM_STREAM = "hecate:events:npm"
+NPM_GROUP = "npm-drain"
+HN_STREAM = "hecate:events:hn"
+HN_GROUP = "hn-drain"
+
 
 class EventBus:
     def __init__(self, url: str) -> None:

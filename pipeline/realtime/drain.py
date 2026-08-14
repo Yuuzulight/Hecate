@@ -17,11 +17,7 @@ avoiding elsewhere.
 from pipeline.loader import PostgreSQLLoader
 from pipeline.logger import get_logger
 from pipeline.matching import resolve
-from pipeline.realtime.bus import EventBus
-from pipeline.realtime.hn_listener import CONSUMER_GROUP as HN_GROUP
-from pipeline.realtime.hn_listener import HN_STREAM
-from pipeline.realtime.npm_listener import CONSUMER_GROUP as NPM_GROUP
-from pipeline.realtime.npm_listener import NPM_STREAM
+from pipeline.realtime.bus import EventBus, HN_GROUP, HN_STREAM, NPM_GROUP, NPM_STREAM
 from pipeline.transformer import RepositoryTransformer
 
 # - Consumer name fixed rather than derived from a hostname or PID: the
@@ -34,6 +30,15 @@ DRAIN_CONSUMER = "daily-batch"
 
 
 def _drain_npm(bus: EventBus, transformer: RepositoryTransformer, loader: PostgreSQLLoader) -> int:
+    # - The group normally already exists (each listener creates its own at
+    #   startup), but ensure_group swallows a connection error by design, so
+    #   a listener that started while Memurai happened to be down can come
+    #   up with no group at all. Calling it here too - idempotent, safe every
+    #   time - means drain() never depends on that having gone right
+    #   somewhere else; the alternative is read_pending_then_new hitting
+    #   NOGROUP, logging "read failed", and silently skipping everything
+    #   buffered since.
+    bus.ensure_group(NPM_STREAM, NPM_GROUP)
     entries = bus.read_pending_then_new(NPM_STREAM, NPM_GROUP, DRAIN_CONSUMER)
     if not entries:
         return 0
@@ -46,6 +51,8 @@ def _drain_npm(bus: EventBus, transformer: RepositoryTransformer, loader: Postgr
 
 
 def _drain_hn(bus: EventBus, loader: PostgreSQLLoader) -> int:
+    # - Same reasoning as _drain_npm's ensure_group call above.
+    bus.ensure_group(HN_STREAM, HN_GROUP)
     entries = bus.read_pending_then_new(HN_STREAM, HN_GROUP, DRAIN_CONSUMER)
     if not entries:
         return 0

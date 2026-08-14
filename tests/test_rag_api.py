@@ -573,42 +573,104 @@ def test_connect_with_retry_gives_up_after_the_last_attempt(monkeypatch):
 # ---- WebSocket /live streaming real-time events
 
 
+class FakeRedisForLive:
+    def __init__(self):
+        self.streams = {}
+        self._seq = 0
+        # - Where "$" resolved to, per stream, the first time it was asked
+        #   for. Real Redis re-resolves "$" fresh on every call to "only
+        #   entries added after this exact call" - it is never a way to
+        #   replay history. The route only ever advances last_ids away from
+        #   "$" once it has actually received an entry, so every call before
+        #   the first delivery still arrives here as "$" - remembering the
+        #   cutoff the first time means those repeated calls agree with each
+        #   other on what counts as "new" instead of re-resolving to a later
+        #   and later tail.
+        self._dollar_cutoff = {}
+
+    def xadd(self, stream, fields):
+        self._seq += 1
+        entry_id = f"{self._seq}-0"
+        self.streams.setdefault(stream, []).append((entry_id, fields))
+        return entry_id
+
+    def xread(self, streams, count=None, block=None):
+        result = []
+        for stream, last_id in streams.items():
+            entries = self.streams.get(stream, [])
+            if last_id == "$":
+                cutoff = self._dollar_cutoff.setdefault(stream, len(entries))
+                new = entries[cutoff:]
+            else:
+                new = [(eid, f) for eid, f in entries if eid > last_id]
+            if new:
+                result.append((stream, new))
+        return result
+
+
 def test_live_websocket_streams_a_published_event(config):
+    import threading
+    import time as time_module
+
     from pipeline.realtime.bus import EventBus
     from pipeline.realtime.npm_listener import NPM_STREAM
 
-    class FakeRedisForLive:
-        def __init__(self):
-            self.streams = {}
-            self._seq = 0
-
-        def xadd(self, stream, fields):
-            self._seq += 1
-            entry_id = f"{self._seq}-0"
-            self.streams.setdefault(stream, []).append((entry_id, fields))
-            return entry_id
-
-        def xread(self, streams, count=None, block=None):
-            result = []
-            for stream, last_id in streams.items():
-                entries = self.streams.get(stream, [])
-                # - When last_id is "$" (initial connection), return all existing entries.
-                #   On subsequent calls with a real ID, return only entries after that ID.
-                new = entries if last_id == "$" else [(eid, f) for eid, f in entries if eid > last_id]
-                if new:
-                    result.append((stream, new))
-            return result
-
     bus = EventBus(url="")
     bus.client = FakeRedisForLive()
-    bus.client.xadd(NPM_STREAM, {"data": '{"id": "npm_left-pad", "name": "left-pad"}'})
 
     client, _, _ = make_client(config, realtime_bus=bus)
 
     with client.websocket_connect("/live") as websocket:
+        # - Published only after the socket is connected, from a background
+        #   thread with a short delay - TestClient's websocket_connect runs
+        #   the app in its own thread, so the route's first xread (which
+        #   resolves "$" against a stream that is still empty at that point)
+        #   has already happened by the time this fires. That is what makes
+        #   this exercise "push a new event to an already-connected client"
+        #   for real, rather than passing only because the fake used to
+        #   replay history on connect - the route's own docstring says there
+        #   is no such replay.
+        def publish_after_connect():
+            time_module.sleep(0.05)
+            bus.client.xadd(NPM_STREAM, {"data": '{"id": "npm_left-pad", "name": "left-pad"}'})
+
+        threading.Thread(target=publish_after_connect, daemon=True).start()
+
         message = websocket.receive_json()
         assert message["stream"] == "npm"
         assert message["event"]["id"] == "npm_left-pad"
+
+
+def test_fake_redis_for_live_does_not_replay_history_predating_the_connection():
+    """Pins real Redis $ semantics on the fixture itself, synchronously and
+    without going through a live WebSocket: an entry that existed before
+    the first "$" read for a stream is history, and real Redis's "$" means
+    "only entries added after this call", never a replay of it. This is
+    the exact bug the previous version of this fixture had - it returned
+    every existing entry on a "$" read - which let
+    test_live_websocket_streams_a_published_event above pass for the wrong
+    reason (see that test's comment) even though the route's own docstring
+    says there is no history replay on connect.
+    """
+    from pipeline.realtime.npm_listener import NPM_STREAM
+
+    fake = FakeRedisForLive()
+    fake.xadd(NPM_STREAM, {"data": '{"id": "npm_left-pad", "name": "left-pad"}'})
+
+    # - Nothing yet: the entry above predates this "$" read, so it must not
+    #   come back.
+    assert fake.xread({NPM_STREAM: "$"}) == []
+
+    # - Something published after that first "$" read must come back on the
+    #   next read, still passing "$" - matching the route, which only ever
+    #   advances last_ids away from "$" once it has actually received an
+    #   entry.
+    fake.xadd(NPM_STREAM, {"data": '{"id": "npm_is-thirteen", "name": "is-thirteen"}'})
+    result = fake.xread({NPM_STREAM: "$"})
+    assert len(result) == 1
+    stream, entries = result[0]
+    assert stream == NPM_STREAM
+    assert len(entries) == 1
 
 
 def test_live_websocket_with_no_bus_configured_closes_cleanly(config):
