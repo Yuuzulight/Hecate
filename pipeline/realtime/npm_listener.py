@@ -1,25 +1,37 @@
 """Listens to npm's own real-time replication feed and publishes matches.
 
-npm has no per-package webhook, but the whole registry is a CouchDB database,
-and CouchDB's continuous _changes feed is a genuine, global, no-opt-in-needed
-firehose of every publish to every package - confirmed against npm/registry's
-own REPLICATE-API docs. Most of that firehose is irrelevant to Hecate (it
-tracks a few thousand packages out of the whole registry), so every change is
-checked against the tracked-npm-packages set (pipeline.realtime.bus.
-EventBus.is_tracked_npm) before anything gets published - the set the daily
-batch refreshes once a day, since only the batch has live Postgres access to
-know what is actually tracked (see pipeline/main.py's refresh step).
+npm has no per-package webhook, but the whole registry is served through a
+CouchDB-shaped _changes endpoint at replicate.npmjs.com. The original design
+here held one long-lived `feed=continuous` connection open, following
+npm/registry's own REPLICATE-API docs - but the live service rejects that:
+confirmed directly against the real endpoint that `feed=continuous`,
+`feed=normal`, `feed=longpoll`, and even a bare `include_docs=true` on any
+request all return 400 Bad Request, regardless of `since`. The only request
+shape that works is a plain `_changes?since=<seq>` poll with no `feed`
+parameter, which returns changed ids and revisions but not the document
+body - so this polls on a short interval instead of streaming, and fetches
+each tracked package's current document separately from the ordinary public
+registry (config.npm_registry - the exact host pipeline.extractors.npm
+already fetches from), the same two-step shape the Hacker News listener
+already uses for an unrelated reason (Firebase's /updates feed also only
+names changed ids, not bodies).
 
-Deliberately does not resume from the last-seen seq across restarts. A
-restart misses whatever was published to a tracked package during the
-listener's downtime - a real, known gap, not a silently assumed one. Worth
-fixing once this has run long enough to know how often it matters; not
-required for this phase (see the spec's "Deferred" section - this specific
-gap is a natural first extension of it, not something this spec already
-covers).
+Most of the registry's changes are irrelevant to Hecate (it tracks a few
+thousand packages out of the whole registry), so every change is checked
+against the tracked-npm-packages set (pipeline.realtime.bus.EventBus.
+is_tracked_npm) BEFORE fetching its document - fetching first would mean
+hitting the public registry for nearly every change on npm, most of which
+would just be discarded a line later.
+
+Deliberately does not persist the since cursor across restarts. A restart
+starts polling from "now" (the registry's current update_seq at startup)
+rather than replaying history - the registry has emitted well over 100
+million changes total, so resuming from 0 is not an option, and persisting
+the cursor somewhere durable is a natural first extension once this has run
+long enough to know how often a restart-sized gap actually matters (see the
+spec's "Deferred" section - not required for this phase).
 """
 
-import json
 import time
 
 import requests
@@ -27,9 +39,10 @@ import requests
 from pipeline.config import Config
 from pipeline.extractors.npm import registry_doc_to_row
 from pipeline.logger import get_logger
-from pipeline.realtime.bus import EventBus, NPM_GROUP, NPM_STREAM
+from pipeline.realtime.bus import NPM_GROUP, NPM_STREAM, EventBus
 
-FEED_URL = "https://replicate.npmjs.com/registry/_changes"
+DB_URL = "https://replicate.npmjs.com/"
+CHANGES_URL = "https://replicate.npmjs.com/_changes"
 
 # - CONSUMER_GROUP kept as an alias, not just a rename: existing importers
 #   (this module's own __main__, and anything reaching for the group name
@@ -37,66 +50,89 @@ FEED_URL = "https://replicate.npmjs.com/registry/_changes"
 #   live in pipeline/realtime/bus.py - see that module's comment for why.
 CONSUMER_GROUP = NPM_GROUP
 
-# - No read timeout: this is a deliberately long-lived streaming connection,
-#   not a normal request. The connect timeout still applies, so a genuinely
-#   unreachable host fails fast rather than hanging forever.
-CONNECT_TIMEOUT = 10
+POLL_SECONDS = 10
+REQUEST_TIMEOUT = 10
+# - Caps how many changes one poll cycle processes - a large backlog (e.g.
+#   right after startup) is still drained, just over more than one cycle
+#   rather than in one unbounded request.
+PAGE_LIMIT = 500
 
 
-def parse_change_line(line: str) -> dict | None:
-    """One line of the CouchDB continuous feed, or None if there's nothing
-    to process - a heartbeat, a malformed line, or a deletion with no doc."""
-    text = line.strip() if isinstance(line, str) else ""
-    if not text:
+def current_seq(session: requests.Session) -> int:
+    """The registry's current change sequence, to start polling from "now"
+    rather than replaying the full history."""
+    response = session.get(DB_URL, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    return response.json()["update_seq"]
+
+
+def poll_changes(session: requests.Session, since: int) -> tuple[list[dict], int]:
+    """One page of changes since the given seq, and the seq to resume from
+    next time. Never includes feed= or include_docs= - both are rejected by
+    the live service regardless of value (confirmed directly - see this
+    module's docstring)."""
+    response = session.get(
+        CHANGES_URL,
+        params={"since": since, "limit": PAGE_LIMIT},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return body.get("results") or [], body.get("last_seq", since)
+
+
+def changed_package_id(entry: dict) -> str | None:
+    """The package name one _changes result names, or None if there's
+    nothing to act on - a deletion (no live document left to describe) or a
+    malformed entry missing "id"."""
+    if not isinstance(entry, dict) or entry.get("deleted"):
         return None
-    try:
-        change = json.loads(text)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(change, dict) or not change.get("doc"):
-        return None
-    return change
+    package_id = entry.get("id")
+    return package_id if isinstance(package_id, str) and package_id else None
 
 
-def handle_change(bus: EventBus, change: dict) -> bool:
-    """Publish one change if its package is tracked. Returns whether it was."""
-    package_id = change.get("id")
-    if not package_id or not bus.is_tracked_npm(package_id):
+def handle_change(bus: EventBus, session: requests.Session, npm_registry: str, package_id: str) -> bool:
+    """Fetch and publish one changed package's current document, if it's
+    tracked. Returns whether it was. The tracked check runs before the
+    fetch, since almost every change on the registry is for an untracked
+    package - fetching first would hit registry.npmjs.org for a change the
+    very next line would discard."""
+    if not bus.is_tracked_npm(package_id):
         return False
-    row = registry_doc_to_row(change["doc"])
+    response = session.get(f"{npm_registry}/{package_id}", timeout=REQUEST_TIMEOUT)
+    if not response.ok:
+        return False
+    row = registry_doc_to_row(response.json())
     bus.publish(NPM_STREAM, row)
     return True
 
 
 def run(config: Config) -> None:
-    """Connect once, then process the feed until the connection drops - the
-    caller (Task 9's service wrapper) is responsible for restarting this on
-    exit, the same way any long-lived service expects its supervisor to."""
+    """Poll for changed packages forever - the caller (Task 9's service
+    wrapper) restarts this on exit, same as the HN listener."""
     log = get_logger("realtime.npm_listener")
     if not config.redis_realtime_url:
         raise SystemExit("REDIS_REALTIME_URL is required to run the npm listener")
 
     bus = EventBus(config.redis_realtime_url)
     bus.ensure_group(NPM_STREAM, CONSUMER_GROUP)
+    session = requests.Session()
 
-    log.info("npm listener starting", extra={"context": {"feed": FEED_URL}})
-    response = requests.get(
-        FEED_URL,
-        params={"feed": "continuous", "include_docs": "true", "since": "now"},
-        stream=True,
-        timeout=(CONNECT_TIMEOUT, None),
-    )
-    response.raise_for_status()
+    since = current_seq(session)
+    log.info("npm listener starting", extra={"context": {"since": since}})
 
     published = 0
-    for raw_line in response.iter_lines(decode_unicode=True):
-        change = parse_change_line(raw_line)
-        if change is None:
-            continue
-        if handle_change(bus, change):
-            published += 1
-            if published % 50 == 0:
-                log.info("npm events published", extra={"context": {"total": published}})
+    while True:
+        entries, since = poll_changes(session, since)
+        for entry in entries:
+            package_id = changed_package_id(entry)
+            if package_id is None:
+                continue
+            if handle_change(bus, session, config.npm_registry, package_id):
+                published += 1
+                if published % 20 == 0:
+                    log.info("npm events published", extra={"context": {"total": published}})
+        time.sleep(POLL_SECONDS)
 
 
 if __name__ == "__main__":
