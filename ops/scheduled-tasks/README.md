@@ -4,7 +4,7 @@ Copies of the prompts driving the three scheduled checks against the running clu
 
 | file | when | what it does |
 |---|---|---|
-| `hecate-daily-health.md` | daily, ~10:15 local | Did the day's run happen? Report gaps. |
+| `hecate-daily-health.md` | daily, ~4:00 local | Did the day's run happen? Report gaps. |
 | `hecate-dashboard-check.md` | once, 13 Aug 2026 — done | First look after a run nobody triggered. |
 | `hecate-growth-check.md` | once, 15 Aug 2026 | Whether growth and momentum mean anything yet, plus a dashboard review. |
 
