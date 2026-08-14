@@ -36,7 +36,13 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDi
 function Install-ListenerService {
     param([string]$Name, [string]$Module)
 
-    nssm install $Name $PythonExe "-m" $Module
+    # - "-u": Python block-buffers stdout by default once it isn't a
+    #   terminal (i.e. whenever NSSM redirects it to a file, below) - without
+    #   this, log lines sit in an internal buffer and only appear once it
+    #   fills or the process exits, which defeats the AppStdout/AppStderr
+    #   logging below at exactly the moment it matters most (watching a
+    #   listener that's actively failing).
+    nssm install $Name $PythonExe "-u" "-m" $Module
     nssm set $Name AppDirectory $RepoRoot
     # - Restart on any exit, including a clean one - these processes are
     #   meant to run forever; the only reason either exits is a crash inside
