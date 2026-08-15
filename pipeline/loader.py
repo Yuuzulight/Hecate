@@ -29,6 +29,12 @@ MENTION_COLUMNS = (
     "extracted_at",
 )
 
+FORECAST_COLUMNS = (
+    "repository_id", "forecast_date", "horizon_days", "days_observed",
+    "baseline_stars", "predicted_stars_p10", "predicted_stars_p50",
+    "predicted_stars_p90", "suppressed_reason", "model_version", "generated_at",
+)
+
 # - downloads stays nullable rather than defaulting to zero. GitHub and GitLab
 #   don't report one at all, and "no such metric" is a different thing from "no
 #   downloads" - collapsing them would quietly drag every average down.
@@ -136,6 +142,32 @@ CREATE TABLE IF NOT EXISTS repository_snapshots (
 CREATE INDEX IF NOT EXISTS idx_repository_snapshots_captured_on
     ON repository_snapshots(captured_on);
 
+-- - One row per repository per forecast horizon per day. Suppressed rows
+--   are written, not omitted - "not enough history yet" is a queryable
+--   fact, the same "NULL, not absent" discipline repository_snapshots and
+--   fct_repository_growth already follow.
+CREATE TABLE IF NOT EXISTS repository_forecasts (
+    repository_id VARCHAR NOT NULL REFERENCES raw_repositories(id) ON DELETE CASCADE,
+    forecast_date DATE NOT NULL,
+    horizon_days INTEGER NOT NULL,
+    days_observed INTEGER NOT NULL,
+    -- - Stars as of forecast_date, not "current stars" - so a later query
+    --   computing predicted_stars_p50 - baseline_stars always anchors to
+    --   what the forecast was actually made against, not whatever today's
+    --   count happens to be.
+    baseline_stars INTEGER NOT NULL,
+    predicted_stars_p10 INTEGER,
+    predicted_stars_p50 INTEGER,
+    predicted_stars_p90 INTEGER,
+    suppressed_reason VARCHAR,
+    model_version VARCHAR NOT NULL,
+    generated_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (repository_id, forecast_date, horizon_days)
+);
+
+CREATE INDEX IF NOT EXISTS idx_repository_forecasts_forecast_date
+    ON repository_forecasts(forecast_date);
+
 CREATE INDEX IF NOT EXISTS idx_raw_repositories_source
     ON raw_repositories(source);
 CREATE INDEX IF NOT EXISTS idx_raw_repositories_extracted_at
@@ -181,6 +213,20 @@ ON CONFLICT (id) DO UPDATE SET
     comments = EXCLUDED.comments,
     extracted_at = EXCLUDED.extracted_at,
     loaded_at = NOW()
+"""
+
+UPSERT_FORECAST = f"""
+INSERT INTO repository_forecasts ({", ".join(FORECAST_COLUMNS)})
+VALUES %s
+ON CONFLICT (repository_id, forecast_date, horizon_days) DO UPDATE SET
+    days_observed = EXCLUDED.days_observed,
+    baseline_stars = EXCLUDED.baseline_stars,
+    predicted_stars_p10 = EXCLUDED.predicted_stars_p10,
+    predicted_stars_p50 = EXCLUDED.predicted_stars_p50,
+    predicted_stars_p90 = EXCLUDED.predicted_stars_p90,
+    suppressed_reason = EXCLUDED.suppressed_reason,
+    model_version = EXCLUDED.model_version,
+    generated_at = EXCLUDED.generated_at
 """
 
 
@@ -392,6 +438,83 @@ class PostgreSQLLoader:
                 f"SELECT {columns} FROM raw_repositories WHERE source = %s", (source,)
             )
             return [dict(zip(COLUMNS, row)) for row in cur.fetchall()]
+
+    def top_forecast_targets(self, n: int) -> list[dict]:
+        """Repositories ranked by yesterday-to-today star gain, best first.
+
+        Computed directly from repository_snapshots rather than the
+        fct_repository_growth dbt mart, so this job's own repository
+        selection does not depend on hecate-dbt having succeeded first -
+        the same reasoning that already has this file reading
+        raw_repositories directly elsewhere.
+
+        A repository with only one snapshot has no previous day to diff
+        against and comes back with stars_gained_1d = NULL rather than
+        being excluded - it's a real candidate the confidence gate (not
+        this ranking) will decide whether to suppress.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                """
+                WITH ranked AS (
+                    SELECT repository_id, stars,
+                           stars - LAG(stars) OVER (
+                               PARTITION BY repository_id ORDER BY captured_on
+                           ) AS gained_1d,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY repository_id ORDER BY captured_on DESC
+                           ) AS rn
+                    FROM repository_snapshots
+                )
+                SELECT r.id, r.name, ranked.stars, ranked.gained_1d
+                FROM ranked
+                JOIN raw_repositories r ON r.id = ranked.repository_id
+                WHERE ranked.rn = 1
+                ORDER BY ranked.gained_1d DESC NULLS LAST
+                LIMIT %s
+                """,
+                (n,),
+            )
+            return [
+                {"id": row[0], "name": row[1], "stars": row[2], "stars_gained_1d": row[3]}
+                for row in cur.fetchall()
+            ]
+
+    def snapshot_series(self, repository_id: str) -> list[tuple]:
+        """One repository's full daily star history, oldest first.
+
+        The context TimesFM forecasts from. Empty for a repository with no
+        snapshots yet rather than an error - the caller's confidence gate
+        suppresses a series this short on its own.
+        """
+        with self.transaction() as cur:
+            cur.execute(
+                "SELECT captured_on, stars FROM repository_snapshots "
+                "WHERE repository_id = %s ORDER BY captured_on",
+                (repository_id,),
+            )
+            return cur.fetchall()
+
+    def write_forecasts(self, rows: list[dict]) -> int:
+        """Upsert a batch of forecast rows. Returns how many were sent."""
+        if not rows:
+            return 0
+        values = [tuple(row.get(column) for column in FORECAST_COLUMNS) for row in rows]
+        with self.transaction() as cur:
+            execute_values(cur, UPSERT_FORECAST, values, page_size=len(values))
+        self.log.info("forecasts written", extra={"context": {"rows": len(values)}})
+        return len(values)
+
+    def forecast_rows_for(self, forecast_date) -> list[dict]:
+        """Read back what's stored for one date - the row-count sanity
+        check runs on this rather than trusting the job's own exit code."""
+        columns = ", ".join(FORECAST_COLUMNS)
+        with self.transaction() as cur:
+            cur.execute(
+                f"SELECT {columns} FROM repository_forecasts WHERE forecast_date = %s",
+                (forecast_date,),
+            )
+            return [dict(zip(FORECAST_COLUMNS, row)) for row in cur.fetchall()]
 
     def close(self) -> None:
         if self.conn is not None:
