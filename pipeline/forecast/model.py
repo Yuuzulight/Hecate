@@ -20,11 +20,19 @@ MODEL_REVISION = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
 MAX_HORIZON_DAYS = 30
 
 # - Confirmed against the real installed model - see Task 3 Step 2 of the
-#   implementation plan this shipped from. The row is 10 values wide
-#   (index 0 is the mean, indices 1-9 are the p10..p90 deciles), not the
-#   11 the plan guessed - confirmed by index 5 exactly matching the
-#   model's own point forecast (diff 0.0) on two different input series,
-#   which only makes sense if index 5 is the median.
+#   implementation plan this shipped from. The row is 10 values wide, not
+#   the 11 the plan guessed. The real basis for these indices is the
+#   installed timesfm==2.0.2 package's own documented output shape
+#   (timesfm-2.0.2.dist-info/METADATA): "quantile_forecast.shape # (2, 12,
+#   10): mean, then 10th to 90th quantiles." - column 0 is the mean,
+#   columns 1-9 are the ascending 10th..90th quantiles, so index 1 = p10,
+#   index 5 = the middle (50th) quantile, index -1 = the last (90th)
+#   quantile. (The installed library's point forecast happens to equal
+#   this row's index 5 too, but that's not independent evidence - reading
+#   timesfm_2p5_torch.py shows the point forecast is literally
+#   `full_forecast[..., 5]`, the same quantile array returned a second
+#   time under a different name, so it would match whatever column the
+#   library picked regardless of what that column represents.)
 _P10_INDEX = 1
 _P50_INDEX = 5
 _P90_INDEX = -1
