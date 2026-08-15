@@ -470,7 +470,7 @@ class PostgreSQLLoader:
                 FROM ranked
                 JOIN raw_repositories r ON r.id = ranked.repository_id
                 WHERE ranked.rn = 1
-                ORDER BY ranked.gained_1d DESC NULLS LAST
+                ORDER BY ranked.gained_1d ASC NULLS LAST
                 LIMIT %s
                 """,
                 (n,),

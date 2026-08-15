@@ -450,9 +450,14 @@ def test_the_indexes_exist(loader):
 
 def test_top_forecast_targets_ranks_by_one_day_gain(loader):
     loader.load_repositories([ROW, dict(ROW, id="github_2", name="smaller", stars=100)])
-    loader.snapshot(with_mentions=False)
-    loader.load_repositories([dict(ROW, stars=185532), dict(ROW, id="github_2", name="smaller", stars=150)])
-    loader.snapshot(with_mentions=False)
+    with loader.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO repository_snapshots (repository_id, captured_on, stars) VALUES "
+            "(%s, current_date - 1, %s), (%s, current_date, %s), "
+            "(%s, current_date - 1, %s), (%s, current_date, %s)",
+            ("github_1", 185432, "github_1", 185532, "github_2", 100, "github_2", 150),
+        )
+    loader.conn.commit()
 
     targets = loader.top_forecast_targets(n=10)
     assert [t["id"] for t in targets] == ["github_2", "github_1"]
@@ -483,9 +488,13 @@ def test_top_forecast_targets_respects_the_limit(loader):
 
 def test_snapshot_series_returns_the_full_daily_history_in_order(loader):
     loader.load_repositories([ROW])
-    loader.snapshot(with_mentions=False)
-    loader.load_repositories([dict(ROW, stars=185500)])
-    loader.snapshot(with_mentions=False)
+    with loader.conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO repository_snapshots (repository_id, captured_on, stars) VALUES "
+            "(%s, current_date - 1, %s), (%s, current_date, %s)",
+            ("github_1", 185432, "github_1", 185500),
+        )
+    loader.conn.commit()
 
     series = loader.snapshot_series("github_1")
     assert [stars for _, stars in series] == [185432, 185500]
