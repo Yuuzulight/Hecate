@@ -646,14 +646,14 @@ git commit -m "Add the TimesFM model wrapper, pinned to the spike-validated chec
 Create `tests/test_forecast_run.py`. This tests `build_forecast_row` directly
 (pure logic, given a series and a fake model) rather than the full `run()`,
 which needs a real database and a real model - those are covered by the
-manual verification checklist in Task 10, matching how this project has
+manual verification checklist in Task 9, matching how this project has
 always treated "does the real thing work end to end" as a live check, not
 a unit test with everything faked.
 
 ```python
 """Forecast job orchestration: building one row is pure enough to test
 directly. The full run() needs a real database and a real model - see
-Task 8's manual verification checklist for that.
+Task 9's manual verification checklist for that.
 """
 
 from datetime import date
@@ -1085,7 +1085,7 @@ git commit -m "Add Prometheus gauges for today's forecast rows and degeneracy fr
 - Modify: `Dockerfile`
 - Modify: `ops/windowed-run.ps1`
 
-**Interfaces:** None - deployment/ops, verified against the real machine per Task 10, not unit-tested.
+**Interfaces:** None - deployment/ops, verified against the real machine per Task 9, not unit-tested.
 
 - [ ] **Step 1: Add the `forecast` build target to the Dockerfile**
 
@@ -1349,7 +1349,7 @@ git commit -m "Add the 7-day forecast dashboard panel and document repository_fo
 
 ---
 
-### Task 9: Ongoing backtest against Hecate's own data
+### Task 8: Ongoing backtest against Hecate's own data
 
 **Files:**
 - Create: `pipeline/forecast/backtest.py`
@@ -1381,7 +1381,7 @@ Create `tests/test_forecast_backtest.py`. `mape`, `naive_forecast`, and
 `rolling_folds` are pure functions - test them directly. `backtest_repository`
 is tested with a fake model, the same reasoning `tests/test_forecast_run.py`
 already used for `build_forecast_row` - a real backtest run belongs in the
-manual verification checklist (Task 10), not a unit test.
+manual verification checklist (Task 9), not a unit test.
 
 ```python
 """The ongoing backtest: the same methodology the original spike used
@@ -1621,7 +1621,7 @@ git commit -m "Add the ongoing backtest tool, verifying forecast quality against
 
 ---
 
-### Task 10: Full suite verification and the live-verification checklist
+### Task 9: Full suite verification and the live-verification checklist
 
 **Files:** None - verification only.
 
@@ -1682,7 +1682,7 @@ Not a pytest step - a checklist, because CI cannot verify any of these and
       non-suppressed forecast actually lands - the gating logic is unit
       tested, but a unit test cannot confirm the gate's threshold and
       Hecate's real snapshot cadence actually agree with each other.
-- [ ] `tools/forecast_backtest.py` (Task 9) was actually run once by hand
+- [ ] `tools/forecast_backtest.py` (Task 8) was actually run once by hand
       against real data, not just unit tested with a fake model - confirm
       it produces a real `avg_improvement` figure and doesn't error against
       whatever repositories have cleared the gate so far, even if that set
