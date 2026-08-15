@@ -1,0 +1,12 @@
+# Forecasting only. Kept out of requirements.txt for the same reason dbt and
+# the RAG stack live in their own files: the base pipeline image is 51.3MB
+# and runs a job measured in minutes, and torch plus a 200M-parameter
+# checkpoint have no business in it.
+#
+# CPU-only torch, pinned via the CPU wheel index explicitly - this project
+# has no GPU anywhere it runs, and the default PyPI wheel pulls CUDA
+# dependencies sized for a GPU that will never exist here.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu
+timesfm[torch]==2.0.2
+numpy==2.5.2
