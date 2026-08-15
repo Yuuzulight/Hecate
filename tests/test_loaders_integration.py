@@ -460,9 +460,9 @@ def test_top_forecast_targets_ranks_by_one_day_gain(loader):
     loader.conn.commit()
 
     targets = loader.top_forecast_targets(n=10)
-    assert [t["id"] for t in targets] == ["github_2", "github_1"]
-    assert targets[0]["stars_gained_1d"] == 50
-    assert targets[1]["stars_gained_1d"] == 100
+    assert [t["id"] for t in targets] == ["github_1", "github_2"]
+    assert targets[0]["stars_gained_1d"] == 100
+    assert targets[1]["stars_gained_1d"] == 50
 
 
 def test_top_forecast_targets_handles_a_repository_with_one_day_of_history(loader):
