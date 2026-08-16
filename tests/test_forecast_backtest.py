@@ -42,6 +42,16 @@ def test_rolling_folds_is_empty_when_the_series_is_too_short():
     assert rolling_folds([1, 2, 3], context_len=5, horizon_days=3) == []
 
 
+def test_rolling_folds_always_covers_the_most_recent_window():
+    series = list(range(1, 51))  # 50 days
+    context_len, horizon_days, max_folds = 14, 7, 15
+    folds = rolling_folds(series, context_len=context_len, horizon_days=horizon_days, max_folds=max_folds)
+
+    last_start = len(series) - context_len - horizon_days
+    most_recent_context = series[last_start : last_start + context_len]
+    assert any(context == most_recent_context for context, _ in folds)
+
+
 class FakeModel:
     def __init__(self, prediction):
         self.prediction = prediction

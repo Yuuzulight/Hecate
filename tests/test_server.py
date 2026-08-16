@@ -194,8 +194,6 @@ from pipeline.config import Config
 from pipeline.loader import PostgreSQLLoader
 from pipeline.server import refresh_forecast_gauges
 
-pytestmark = pytest.mark.integration
-
 from tests.test_loaders_integration import ROW, TEST_SCHEMA, wanted
 
 
@@ -217,6 +215,7 @@ def loader():
     loader.close()
 
 
+@pytest.mark.integration
 def test_refresh_forecast_gauges_counts_real_and_suppressed_separately(loader):
     from datetime import date, datetime, timezone
 

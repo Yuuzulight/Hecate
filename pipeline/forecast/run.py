@@ -7,7 +7,7 @@ addition on top of the daily collection rather than part of it.
 """
 
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from pipeline.config import Config
 from pipeline.exceptions import ForecastError, HecateError
@@ -30,19 +30,27 @@ DEGENERACY_FRACTION_THRESHOLD = 0.5
 
 
 def forward_fill(series: list[tuple]) -> list[float]:
-    """The stars column only, with any None carried forward from the prior
-    day - TimesFM needs a clean numeric series, and this is a documented
-    simplification, not a silent one (see the design doc)."""
+    """One value per calendar day between the first and last real snapshot,
+    carrying the last known value forward across any gap - whether the gap
+    is a missing row (a collection miss) or an explicit NULL stars value (a
+    partial collection). Leading gaps before the first known value are
+    dropped, not filled - there's nothing to carry forward yet."""
+    known = [(captured_on, stars) for captured_on, stars in series if stars is not None]
+    if not known:
+        return []
+    by_date = dict(known)
+    start = known[0][0]
+    end = known[-1][0]
+
     filled = []
+    current = start
     last = None
-    for _, stars in series:
-        value = stars if stars is not None else last
-        filled.append(value)
-        last = value
-    # - Leading Nones (a repository whose very first snapshot was null)
-    #   have nothing earlier to fill from - drop them rather than
-    #   fabricate a value with no basis at all.
-    return [v for v in filled if v is not None]
+    while current <= end:
+        if current in by_date:
+            last = by_date[current]
+        filled.append(float(last))
+        current += timedelta(days=1)
+    return filled
 
 
 def build_forecast_row(repository_id: str, forecast_date: date, horizon_days: int, series: list[tuple], model) -> dict:

@@ -186,15 +186,17 @@ torch plus the checkpoint: **measured against the real build, 3.26GB disk
 usage / 1.17GB content size** (`docker build --target forecast`), just above
 the original 1.5-3GB estimate rather than settled speculation.
 
-New `k8s/11-forecast-cronjob.yaml`: `suspend: true`, schedule `30 3 * * *`
+New `k8s/11-forecast-cronjob.yaml`: `suspend: true`, schedule `45 3 * * *`
 (between `hecate-dbt`'s `0 3 * * *` and `hecate-backup`'s `0 4 * * *`, the same
 slot pattern `hecate-embed` uses relative to `hecate-dbt`). Resource
 requests/limits start at `500m/1Gi requests -> 2 CPU/2Gi limits` - wider than
 `hecate-dbt`'s, since loading a 200M-parameter model needs real headroom - and,
-like the image size above, **flagged as needing real measurement**, not treated
-as settled, the same way Phase 3's Memurai/listener footprint was measured
-against the real running services rather than left as the spec's original
-estimate.
+like the image size above, **measured against the real cluster**: job
+wall-clock ran 15-47 seconds across three real runs, well under the original
+"a minute or two" estimate, with zero OOMKilled/Evicted events across all
+runs against those requests/limits, the same way Phase 3's Memurai/listener
+footprint was measured against the real running services rather than left as
+the spec's original estimate.
 
 ## Dashboard
 
@@ -214,9 +216,10 @@ horizon has its own real backtest and repositories start clearing its gate.
 
 No new recurring cloud spend - runs on the same laptop, inside the same daily
 Docker window, as every other job. The real cost is local: a new 3.26GB Docker
-image (measured, see Docker/K8s above) and roughly a minute or two of added
-CPU-only inference time in the daily window (not yet measured against the real
-job), for 50 repositories' worth of short series, once a day.
+image (measured, see Docker/K8s above) and 15-47 seconds of added CPU-only
+inference time in the daily window (measured against the real job across
+three real runs, see Docker/K8s above), for 50 repositories' worth of short
+series, once a day.
 
 ## Success criteria
 

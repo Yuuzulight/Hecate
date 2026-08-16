@@ -5,7 +5,7 @@ Task 9's manual verification checklist for that.
 
 from datetime import date
 
-from pipeline.forecast.run import build_forecast_row
+from pipeline.forecast.run import build_forecast_row, forward_fill
 
 
 class FakeModel:
@@ -60,25 +60,20 @@ def test_a_thinly_observed_series_is_suppressed_without_calling_the_model(monkey
     assert model.calls == []  # no wasted inference on a series that's gated out
 
 
-def test_a_gap_day_is_forward_filled_before_forecasting(monkeypatch):
-    import pipeline.forecast.run as run_module
+def test_a_missing_snapshot_day_is_forward_filled_before_forecasting():
+    # The real, dominant gap shape: a collection miss produces no row at
+    # all for that day, not a row with a NULL value.
+    series = [(date(2026, 8, 1), 100.0), (date(2026, 8, 3), 110.0)]
+    assert forward_fill(series) == [100.0, 100.0, 110.0]
 
-    model = FakeModel({"p10": 1, "p50": 2, "p90": 3})
-    captured = {}
 
-    def fake_forecast(m, series, horizon_days):
-        captured["series"] = series
-        return m.forecast_call(series, horizon_days)
+def test_a_null_valued_snapshot_is_also_forward_filled():
+    # A rarer but real second gap shape: the row exists (a collection ran)
+    # but didn't get a star count that day.
+    series = [(date(2026, 8, 1), 100.0), (date(2026, 8, 2), None), (date(2026, 8, 3), 110.0)]
+    assert forward_fill(series) == [100.0, 100.0, 110.0]
 
-    monkeypatch.setattr(run_module, "forecast", fake_forecast)
 
-    # - A None in the middle - a day repository_snapshots has no row for
-    #   this repository (stars can genuinely be None if a source outage
-    #   left it null; the more common real gap is a missing captured_on
-    #   day entirely, but a None value exercises the same fill path).
-    series = [
-        (date(2026, 8, 1), 100), (date(2026, 8, 2), None), (date(2026, 8, 3), 110)
-    ] + [(date(2026, 8, 4 + i), 110 + i) for i in range(11)]
-    build_forecast_row("github_1", date(2026, 8, 21), 7, series, model)
-
-    assert captured["series"][1] == 100  # forward-filled from the day before, not None
+def test_leading_gaps_before_the_first_real_value_are_dropped_not_filled():
+    series = [(date(2026, 8, 1), None), (date(2026, 8, 2), 100.0)]
+    assert forward_fill(series) == [100.0]

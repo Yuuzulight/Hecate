@@ -24,18 +24,28 @@ def mape(actual: list[float], predicted: list[float]) -> float:
 
 
 def rolling_folds(series: list[float], context_len: int, horizon_days: int, max_folds: int = 15) -> list[tuple]:
-    """(context_window, actual_future) pairs, stepped across the series.
-    Empty if the series isn't even long enough for one fold."""
+    """(context_window, actual_future) pairs, spread across the series so
+    the most recent window is always included - a fixed cap on fold count
+    must not come at the cost of dropping recent history, since that's
+    where a real quality drift would show up first."""
     n = len(series)
-    if n < context_len + horizon_days:
+    last_start = n - context_len - horizon_days
+    if last_start < 0:
         return []
-    folds = []
-    step = max(1, (n - context_len - horizon_days) // max_folds)
-    start = 0
-    while start + context_len + horizon_days <= n and len(folds) < max_folds:
-        folds.append((series[start : start + context_len], series[start + context_len : start + context_len + horizon_days]))
-        start += step
-    return folds
+
+    if last_start == 0:
+        starts = [0]
+    else:
+        count = min(max_folds, last_start + 1)
+        if count == 1:
+            starts = [last_start]
+        else:
+            starts = sorted({round(i * last_start / (count - 1)) for i in range(count)})
+
+    return [
+        (series[s : s + context_len], series[s + context_len : s + context_len + horizon_days])
+        for s in starts
+    ]
 
 
 def backtest_repository(model, series: list[float], horizon_days: int) -> dict | None:
