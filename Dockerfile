@@ -75,6 +75,45 @@ EXPOSE 8001
 CMD ["python", "-m", "pipeline.rag.api"]
 
 
+# - Also before the pipeline stage, same reasoning as dbt and rag: an
+#   untargeted build has to keep producing the pipeline image.
+#
+# A fourth image rather than a fatter one, and the biggest one here by far -
+# torch plus a 200M-parameter checkpoint dwarf everything else in this
+# file. The checkpoint is prefetched below at build time, not downloaded at
+# CronJob runtime, so a 3am pod never makes a surprise network call to
+# HuggingFace - it either runs from what's baked in, or the build itself
+# fails somewhere visible.
+FROM python:3.11-slim AS forecast
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/home/hecate/.local/bin:$PATH \
+    HF_HOME=/home/hecate/.cache/huggingface
+
+RUN useradd --create-home --uid 1000 hecate
+
+USER hecate
+WORKDIR /app
+
+COPY --chown=hecate:hecate requirements.txt requirements-forecast.txt ./
+RUN pip install --user --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-forecast.txt
+
+# - Pinned to the exact revision the spike validated - see
+#   docs/specs/2026-08-15-timesfm-forecasting-design.md. A different
+#   revision here would silently invalidate that spike's result.
+RUN python -c "\
+import timesfm; \
+timesfm.TimesFM_2p5_200M_torch.from_pretrained( \
+    'google/timesfm-2.5-200m-pytorch', \
+    revision='1d952420fba87f3c6dee4f240de0f1a0fbc790e3', \
+)"
+
+COPY --chown=hecate:hecate pipeline/ ./pipeline/
+
+CMD ["python", "-m", "pipeline.forecast.run"]
+
+
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
