@@ -38,13 +38,28 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: forecast
-              # - Built from --target forecast. Not yet published alongside
-              #   hecate/hecate-dbt/hecate-rag - build and load it locally
-              #   (see the ops/realtime/README.md pattern for docker build
-              #   --target ... this project already uses) before this
-              #   CronJob can actually run; document the real publish step
-              #   once this has been verified against the real machine.
-              image: ghcr.io/yuuzulight/hecate-forecast:2.0.0
+              # - Built from --target forecast and side-loaded onto the node,
+              #   not pulled: unlike hecate/hecate-dbt/hecate-rag this one has
+              #   never been published, so the dev tag is what actually exists.
+              #   The side-loaded pattern is the one 03-cronjob.yaml documents:
+              #
+              #     docker build --target forecast -t hecate-forecast:dev .
+              #     docker save hecate-forecast:dev | docker exec -i \
+              #       desktop-control-plane ctr -n k8s.io images import -
+              #
+              #   Re-import after every rebuild - the tag stays put, so a stale
+              #   copy keeps forecasting happily off old code.
+              #
+              # - The policy is pinned here rather than patched onto the live
+              #   CronJob. It was patched once, on 2026-08-16, while the image
+              #   above still named the unpublished ghcr tag: Never plus a name
+              #   the node does not have is ErrImageNeverPull forever, and the
+              #   kubelet retries it without ever failing the Job, so the
+              #   windowed run spent its whole 1200s ceiling waiting on a
+              #   container that had not started. Keeping both halves in the
+              #   manifest is what stops that pairing coming back.
+              image: hecate-forecast:dev
+              imagePullPolicy: Never
               env:
                 - name: DB_HOST
                   value: postgres.hecate.svc.cluster.local
