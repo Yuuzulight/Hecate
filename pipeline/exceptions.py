@@ -27,3 +27,7 @@ class LoadError(HecateError):
 
 class EmbeddingError(HecateError):
     """Embeddings could not be produced or stored."""
+
+
+class ForecastError(HecateError):
+    """A forecast could not be produced or stored."""

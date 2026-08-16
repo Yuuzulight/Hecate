@@ -321,14 +321,14 @@ try {
     #   Embedding goes last because it is the only one nothing else waits on:
     #   it writes to Redis, reads rows the others have finished with, and a
     #   slow API call at the end costs nobody the backup.
-    $sequence = @('hecate-daily', 'hecate-dbt', 'hecate-backup', 'hecate-embed')
+    $sequence = @('hecate-daily', 'hecate-dbt', 'hecate-forecast', 'hecate-backup', 'hecate-embed')
     if ((Get-Date).DayOfWeek -eq 'Sunday') { $sequence += 'hecate-dbt-full' }
 
     # - Jobs whose failure is recorded but does not make the day a failure.
     #   Similarity is an addition to the context rather than part of it, so a
     #   missing API key should not turn a good collection into a red run - and
     #   should not be silent either, which is why it still lands in the log.
-    $optional = @('hecate-embed')
+    $optional = @('hecate-forecast', 'hecate-embed')
 
     foreach ($cj in $sequence) {
         $r = Invoke-HecateJob $cj $stamp

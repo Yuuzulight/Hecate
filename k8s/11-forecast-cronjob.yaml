@@ -1,0 +1,69 @@
+# Forecasts star growth for the top 50 repositories by recent velocity, after
+# collection and dbt on the same reasoning as the other jobs: it reads
+# raw_repositories and repository_snapshots directly, not a dbt mart, so it
+# doesn't strictly need hecate-dbt to have run first - but the slot keeps
+# every real-time/derived-data job grouped together for a reader.
+#
+# Optional, like hecate-embed: a failure here is logged and does not fail
+# the day. This is new, ML-dependency-heavy, and forecasts are inherently
+# best-effort while Hecate's own history is still short - see
+# docs/specs/2026-08-15-timesfm-forecasting-design.md.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hecate-forecast
+  namespace: hecate
+spec:
+  schedule: "45 3 * * *"
+
+  # - Suspended like the others; the windowed run creates the Job. See
+  #   03-cronjob.yaml for why the schedule above is documentation rather
+  #   than something that fires.
+  suspend: true
+
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: hecate-pipeline
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: forecast
+              # - Built from --target forecast. Not yet published alongside
+              #   hecate/hecate-dbt/hecate-rag - build and load it locally
+              #   (see the ops/realtime/README.md pattern for docker build
+              #   --target ... this project already uses) before this
+              #   CronJob can actually run; document the real publish step
+              #   once this has been verified against the real machine.
+              image: ghcr.io/yuuzulight/hecate-forecast:2.0.0
+              env:
+                - name: DB_HOST
+                  value: postgres.hecate.svc.cluster.local
+                - name: DB_NAME
+                  value: hecate
+                - name: DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: username
+                - name: DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: db-secret
+                      key: password
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
