@@ -181,9 +181,10 @@ dependency in this project already gets (`requirements.txt` pins exact versions
 throughout; `dbt-core==1.12.0`, not a floating version).
 
 This keeps the base 51MB pipeline image and the `rag` image completely
-unaffected - `forecast` is a new, separate, meaningfully larger image (realistic
-estimate 1.5-3GB with torch plus the checkpoint; **not yet measured against the
-real build**, flagged here rather than asserted as settled).
+unaffected - `forecast` is a new, separate, meaningfully larger image with
+torch plus the checkpoint: **measured against the real build, 3.26GB disk
+usage / 1.17GB content size** (`docker build --target forecast`), just above
+the original 1.5-3GB estimate rather than settled speculation.
 
 New `k8s/11-forecast-cronjob.yaml`: `suspend: true`, schedule `30 3 * * *`
 (between `hecate-dbt`'s `0 3 * * *` and `hecate-backup`'s `0 4 * * *`, the same
@@ -212,10 +213,10 @@ horizon has its own real backtest and repositories start clearing its gate.
 ## Cost
 
 No new recurring cloud spend - runs on the same laptop, inside the same daily
-Docker window, as every other job. The real cost is local: a new ~1.5-3GB Docker
-image (not yet measured) and roughly a minute or two of added CPU-only inference
-time in the daily window (not yet measured against the real job), for 50
-repositories' worth of short series, once a day.
+Docker window, as every other job. The real cost is local: a new 3.26GB Docker
+image (measured, see Docker/K8s above) and roughly a minute or two of added
+CPU-only inference time in the daily window (not yet measured against the real
+job), for 50 repositories' worth of short series, once a day.
 
 ## Success criteria
 
