@@ -17,7 +17,7 @@ def config(monkeypatch):
 
 
 @pytest.fixture
-def loader(config):
+def mock_loader(config):
     loader = MagicMock()
     cursor = MagicMock()
     loader.transaction.return_value.__enter__.return_value = cursor
@@ -28,34 +28,34 @@ def rows_on(loader, rows):
     loader.transaction.return_value.__enter__.return_value.fetchall.return_value = rows
 
 
-def test_gauges_follow_the_stored_row_counts(loader):
-    rows_on(loader, [("github", 100, 30.0), ("npm", 40, 90.0)])
+def test_gauges_follow_the_stored_row_counts(mock_loader):
+    rows_on(mock_loader, [("github", 100, 30.0), ("npm", 40, 90.0)])
 
-    assert server.refresh(loader) == {"github": 100, "npm": 40}
+    assert server.refresh(mock_loader) == {"github": 100, "npm": 40}
     assert REGISTRY.get_sample_value("hecate_repositories", {"source": "github"}) == 100
     assert REGISTRY.get_sample_value("hecate_repositories", {"source": "npm"}) == 40
 
 
-def test_extraction_age_is_recorded(loader):
-    rows_on(loader, [("github", 10, 3600.0)])
-    server.refresh(loader)
+def test_extraction_age_is_recorded(mock_loader):
+    rows_on(mock_loader, [("github", 10, 3600.0)])
+    server.refresh(mock_loader)
     value = REGISTRY.get_sample_value(
         "hecate_last_extraction_age_seconds", {"source": "github"}
     )
     assert value == 3600.0
 
 
-def test_a_null_age_becomes_zero_rather_than_failing(loader):
-    rows_on(loader, [("gitlab", 5, None)])
-    server.refresh(loader)
+def test_a_null_age_becomes_zero_rather_than_failing(mock_loader):
+    rows_on(mock_loader, [("gitlab", 5, None)])
+    server.refresh(mock_loader)
     assert REGISTRY.get_sample_value(
         "hecate_last_extraction_age_seconds", {"source": "gitlab"}
     ) == 0
 
 
-def test_an_empty_table_refreshes_to_nothing(loader):
-    rows_on(loader, [])
-    assert server.refresh(loader) == {}
+def test_an_empty_table_refreshes_to_nothing(mock_loader):
+    rows_on(mock_loader, [])
+    assert server.refresh(mock_loader) == {}
 
 
 def test_a_database_failure_does_not_bring_the_endpoint_down(config, monkeypatch):
@@ -79,6 +79,7 @@ def test_a_database_failure_does_not_bring_the_endpoint_down(config, monkeypatch
 def test_the_connection_is_closed_on_the_way_out(config, monkeypatch):
     stub = MagicMock()
     stub.transaction.return_value.__enter__.return_value.fetchall.return_value = []
+    stub.transaction.return_value.__enter__.return_value.fetchone.return_value = (0, 0)
     monkeypatch.setattr(server, "PostgreSQLLoader", lambda config: stub)
     monkeypatch.setattr(server, "start_http_server", lambda port: None)
 
@@ -91,6 +92,7 @@ def test_it_serves_on_the_port_prometheus_expects(config, monkeypatch):
     seen = {}
     stub = MagicMock()
     stub.transaction.return_value.__enter__.return_value.fetchall.return_value = []
+    stub.transaction.return_value.__enter__.return_value.fetchone.return_value = (0, 0)
     monkeypatch.setattr(server, "PostgreSQLLoader", lambda config: stub)
     monkeypatch.setattr(server, "start_http_server", lambda port: seen.update(port=port))
 
@@ -115,16 +117,16 @@ def test_an_unreachable_database_is_retried_rather_than_fatal(config, monkeypatc
     assert after - before == 1
 
 
-def test_a_source_that_disappears_stops_being_reported(loader):
+def test_a_source_that_disappears_stops_being_reported(mock_loader):
     # - A gauge holds its last value until something clears it, so without this
     #   a source whose rows were deleted would keep reporting the count it had
     #   when it vanished.
-    rows_on(loader, [("github", 100, 30.0), ("gone", 7, 10.0)])
-    server.refresh(loader)
+    rows_on(mock_loader, [("github", 100, 30.0), ("gone", 7, 10.0)])
+    server.refresh(mock_loader)
     assert REGISTRY.get_sample_value("hecate_repositories", {"source": "gone"}) == 7
 
-    rows_on(loader, [("github", 100, 30.0)])
-    server.refresh(loader)
+    rows_on(mock_loader, [("github", 100, 30.0)])
+    server.refresh(mock_loader)
     assert REGISTRY.get_sample_value("hecate_repositories", {"source": "gone"}) is None
     assert REGISTRY.get_sample_value(
         "hecate_last_extraction_age_seconds", {"source": "gone"}
@@ -138,6 +140,7 @@ def test_the_exporter_does_not_create_schema(config, monkeypatch):
     #   DDL on every reconnect is privilege it has no use for.
     stub = MagicMock()
     stub.transaction.return_value.__enter__.return_value.fetchall.return_value = []
+    stub.transaction.return_value.__enter__.return_value.fetchone.return_value = (0, 0)
     monkeypatch.setattr(server, "PostgreSQLLoader", lambda config: stub)
     monkeypatch.setattr(server, "start_http_server", lambda port: None)
 
@@ -165,6 +168,7 @@ def test_a_dropped_connection_is_replaced_on_the_next_cycle(config, monkeypatch)
     def build(config):
         stub = MagicMock()
         stub.transaction.return_value.__enter__.return_value.fetchall.return_value = []
+        stub.transaction.return_value.__enter__.return_value.fetchone.return_value = (0, 0)
         built.append(stub)
         # - First one fails on use, forcing the loop to throw it away.
         if len(built) == 1:
@@ -196,7 +200,7 @@ from tests.test_loaders_integration import ROW, TEST_SCHEMA, wanted
 
 
 @pytest.fixture
-def integration_loader():
+def loader():
     if not wanted():
         pytest.skip("set HECATE_INTEGRATION=1 to run against a real database")
     loader = PostgreSQLLoader(Config())
@@ -213,12 +217,12 @@ def integration_loader():
     loader.close()
 
 
-def test_refresh_forecast_gauges_counts_real_and_suppressed_separately(integration_loader):
+def test_refresh_forecast_gauges_counts_real_and_suppressed_separately(loader):
     from datetime import date, datetime, timezone
 
-    integration_loader.load_repositories([ROW])
+    loader.load_repositories([ROW])
     today = date.today()
-    integration_loader.write_forecasts([
+    loader.write_forecasts([
         {
             "repository_id": "github_1", "forecast_date": today, "horizon_days": 7,
             "days_observed": 14, "baseline_stars": 100,
@@ -233,5 +237,5 @@ def test_refresh_forecast_gauges_counts_real_and_suppressed_separately(integrati
         },
     ])
 
-    counts = refresh_forecast_gauges(integration_loader)
+    counts = refresh_forecast_gauges(loader)
     assert counts == {(7, False): 1, (30, True): 1}

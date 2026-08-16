@@ -92,10 +92,8 @@ def refresh_forecast_gauges(loader: PostgreSQLLoader) -> dict:
 
     with loader.transaction() as cur:
         cur.execute(FORECAST_DEGENERACY_QUERY)
-        result = cur.fetchone()
-    if result and len(result) >= 2:
-        degenerate, total = result[0], result[1]
-        metrics.forecast_degenerate_fraction.set(degenerate / total if total else 0)
+        degenerate, total = cur.fetchone()
+    metrics.forecast_degenerate_fraction.set(degenerate / total if total else 0)
 
     return counts
 
