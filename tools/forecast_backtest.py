@@ -15,6 +15,7 @@ from pipeline.config import Config
 from pipeline.forecast.backtest import backtest_repository
 from pipeline.forecast.gating import GATE_THRESHOLDS
 from pipeline.forecast.model import load_model
+from pipeline.forecast.run import forward_fill
 from pipeline.loader import PostgreSQLLoader
 from pipeline.logger import get_logger
 
@@ -34,7 +35,7 @@ def main() -> int:
         results = []
         for target in targets:
             series_rows = loader.snapshot_series(target["id"])
-            series = [stars for _, stars in series_rows if stars is not None]
+            series = forward_fill(series_rows)
             if len(series) < GATE_THRESHOLDS[HORIZON_DAYS]:
                 continue  # hasn't cleared its own gate yet - nothing to backtest
             result = backtest_repository(model, series, HORIZON_DAYS)

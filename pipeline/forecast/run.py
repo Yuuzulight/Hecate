@@ -29,7 +29,7 @@ MODEL_VERSION = f"{MODEL_ID.rsplit('/', 1)[-1]}@{MODEL_REVISION}"
 DEGENERACY_FRACTION_THRESHOLD = 0.5
 
 
-def _forward_fill(series: list[tuple]) -> list[float]:
+def forward_fill(series: list[tuple]) -> list[float]:
     """The stars column only, with any None carried forward from the prior
     day - TimesFM needs a clean numeric series, and this is a documented
     simplification, not a silent one (see the design doc)."""
@@ -48,7 +48,7 @@ def _forward_fill(series: list[tuple]) -> list[float]:
 def build_forecast_row(repository_id: str, forecast_date: date, horizon_days: int, series: list[tuple], model) -> dict:
     """One repository, one horizon: a real forecast if the gate clears,
     a suppressed row explaining why if it doesn't."""
-    filled = _forward_fill(series)
+    filled = forward_fill(series)
     days_observed = len(filled)
     baseline_stars = filled[-1] if filled else 0
     reason = suppressed_reason(days_observed, horizon_days)

@@ -32,7 +32,7 @@ def rolling_folds(series: list[float], context_len: int, horizon_days: int, max_
     folds = []
     step = max(1, (n - context_len - horizon_days) // max_folds)
     start = 0
-    while start + context_len + horizon_days <= n:
+    while start + context_len + horizon_days <= n and len(folds) < max_folds:
         folds.append((series[start : start + context_len], series[start + context_len : start + context_len + horizon_days]))
         start += step
     return folds
