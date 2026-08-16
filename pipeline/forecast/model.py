@@ -9,7 +9,6 @@ just quietly change with nothing to say why.
 """
 
 import numpy as np
-import timesfm
 
 MODEL_ID = "google/timesfm-2.5-200m-pytorch"
 MODEL_REVISION = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
@@ -39,6 +38,8 @@ _P90_INDEX = -1
 
 
 def load_model() -> "timesfm.TimesFM_2p5_200M_torch":
+    import timesfm
+
     model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
     config = timesfm.ForecastConfig(
         max_context=1024,
