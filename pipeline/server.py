@@ -64,6 +64,42 @@ def refresh(loader: PostgreSQLLoader) -> dict:
     return seen
 
 
+FORECAST_STATS_QUERY = """
+SELECT horizon_days, suppressed_reason IS NOT NULL, count(*)
+FROM repository_forecasts
+WHERE forecast_date = current_date
+GROUP BY horizon_days, suppressed_reason IS NOT NULL
+"""
+
+FORECAST_DEGENERACY_QUERY = """
+SELECT count(*) FILTER (WHERE predicted_stars_p50 = baseline_stars), count(*)
+FROM repository_forecasts
+WHERE forecast_date = current_date AND suppressed_reason IS NULL
+"""
+
+
+def refresh_forecast_gauges(loader: PostgreSQLLoader) -> dict:
+    """Pull today's forecast row counts and degeneracy fraction into the
+    gauges. Returns {(horizon_days, suppressed): count} for testing."""
+    with loader.transaction() as cur:
+        cur.execute(FORECAST_STATS_QUERY)
+        rows = cur.fetchall()
+
+    counts = {}
+    for horizon_days, suppressed, count in rows:
+        metrics.forecast_rows.labels(horizon_days=str(horizon_days), suppressed=str(suppressed)).set(count)
+        counts[(horizon_days, suppressed)] = count
+
+    with loader.transaction() as cur:
+        cur.execute(FORECAST_DEGENERACY_QUERY)
+        result = cur.fetchone()
+    if result and len(result) >= 2:
+        degenerate, total = result[0], result[1]
+        metrics.forecast_degenerate_fraction.set(degenerate / total if total else 0)
+
+    return counts
+
+
 def serve(
     config: Config,
     refresh_seconds: int = REFRESH_SECONDS,
@@ -97,6 +133,7 @@ def serve(
                 #   the schema. Against an empty database the query fails, gets
                 #   counted, and is retried, which is the honest outcome.
                 counts = refresh(loader)
+                refresh_forecast_gauges(loader)
                 log.info("gauges refreshed", extra={"context": {"sources": counts}})
             except LoadError as exc:
                 metrics.errors.labels(type="database", source="postgres").inc()

@@ -178,3 +178,60 @@ def test_a_dropped_connection_is_replaced_on_the_next_cycle(config, monkeypatch)
 
     assert len(built) == 2, "a failed connection should be rebuilt, not reused"
     built[0].close.assert_called_once()
+
+
+# - Integration tests for forecast gauges. These read back from a real
+#   PostgreSQL to verify the gauge refresh correctly pulls today's forecast
+#   data.
+
+import pytest
+
+from pipeline.config import Config
+from pipeline.loader import PostgreSQLLoader
+from pipeline.server import refresh_forecast_gauges
+
+pytestmark = pytest.mark.integration
+
+from tests.test_loaders_integration import ROW, TEST_SCHEMA, wanted
+
+
+@pytest.fixture
+def integration_loader():
+    if not wanted():
+        pytest.skip("set HECATE_INTEGRATION=1 to run against a real database")
+    loader = PostgreSQLLoader(Config())
+    loader.connect()
+    with loader.conn.cursor() as cur:
+        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {TEST_SCHEMA}")
+        cur.execute(f"SET search_path TO {TEST_SCHEMA}")
+    loader.conn.commit()
+    loader.create_tables()
+    with loader.conn.cursor() as cur:
+        cur.execute("TRUNCATE raw_repositories CASCADE")
+    loader.conn.commit()
+    yield loader
+    loader.close()
+
+
+def test_refresh_forecast_gauges_counts_real_and_suppressed_separately(integration_loader):
+    from datetime import date, datetime, timezone
+
+    integration_loader.load_repositories([ROW])
+    today = date.today()
+    integration_loader.write_forecasts([
+        {
+            "repository_id": "github_1", "forecast_date": today, "horizon_days": 7,
+            "days_observed": 14, "baseline_stars": 100,
+            "predicted_stars_p10": 101, "predicted_stars_p50": 102, "predicted_stars_p90": 103,
+            "suppressed_reason": None, "model_version": "test", "generated_at": datetime.now(timezone.utc),
+        },
+        {
+            "repository_id": "github_1", "forecast_date": today, "horizon_days": 30,
+            "days_observed": 14, "baseline_stars": 100,
+            "predicted_stars_p10": None, "predicted_stars_p50": None, "predicted_stars_p90": None,
+            "suppressed_reason": "insufficient_history", "model_version": "test", "generated_at": datetime.now(timezone.utc),
+        },
+    ])
+
+    counts = refresh_forecast_gauges(integration_loader)
+    assert counts == {(7, False): 1, (30, True): 1}
