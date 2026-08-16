@@ -87,19 +87,3 @@ rag_context_cache = Counter(
     "Context cache lookups, by result",
     ["result"],
 )
-
-# - Phase 4. Read back from repository_forecasts on each scrape, the same
-#   reason repositories/last_extraction_age already are: hecate-forecast is
-#   a one-shot CronJob pod, and its in-process counters vanish before
-#   Prometheus can scrape them.
-
-forecast_rows = Gauge(
-    "hecate_forecast_rows",
-    "Today's forecast rows, by horizon and whether they were suppressed",
-    ["horizon_days", "suppressed"],
-)
-
-forecast_degenerate_fraction = Gauge(
-    "hecate_forecast_degenerate_fraction",
-    "Fraction of today's real (non-suppressed) forecasts predicting no change from baseline",
-)

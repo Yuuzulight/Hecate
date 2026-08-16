@@ -7,8 +7,6 @@ it was asked. A test that read the 503 out of the response body would pass
 just as happily against a flag that called Claude and threw the answer away.
 """
 
-import threading
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -90,13 +88,10 @@ def config(monkeypatch):
     return Config()
 
 
-def make_client(config, chain=None, retriever=None, realtime_bus=None):
+def make_client(config, chain=None, retriever=None):
     chain = chain if chain is not None else StubChain()
     retriever = retriever if retriever is not None else StubRetriever()
-    if realtime_bus is not None:
-        app = build_app(config, chain=chain, retriever=retriever, realtime_bus=realtime_bus)
-    else:
-        app = build_app(config, chain=chain, retriever=retriever)
+    app = build_app(config, chain=chain, retriever=retriever)
     return TestClient(app), chain, retriever
 
 
@@ -570,130 +565,3 @@ def test_connect_with_retry_gives_up_after_the_last_attempt(monkeypatch):
         api_module._connect_with_retry(retriever, StubLog())
 
     assert retriever.calls == 3
-
-
-# ---- WebSocket /live streaming real-time events
-
-
-class FakeRedisForLive:
-    def __init__(self):
-        self.streams = {}
-        self._seq = 0
-        # - Where "$" resolved to, per stream, the first time it was asked
-        #   for. Real Redis re-resolves "$" fresh on every call to "only
-        #   entries added after this exact call" - it is never a way to
-        #   replay history. The route only ever advances last_ids away from
-        #   "$" once it has actually received an entry, so every call before
-        #   the first delivery still arrives here as "$" - remembering the
-        #   cutoff the first time means those repeated calls agree with each
-        #   other on what counts as "new" instead of re-resolving to a later
-        #   and later tail.
-        self._dollar_cutoff = {}
-        # - Set once the route's background thread has made its first read
-        #   call, so a test can publish only after the "$" cutoff above is
-        #   actually established, instead of racing it with a fixed sleep -
-        #   publishing before the first read would make the fake capture a
-        #   cutoff past the new entry, and the route would never see it,
-        #   hanging the test on a receive_json() call this starlette version
-        #   gives no timeout for.
-        self.first_read_done = threading.Event()
-
-    def xadd(self, stream, fields):
-        self._seq += 1
-        entry_id = f"{self._seq}-0"
-        self.streams.setdefault(stream, []).append((entry_id, fields))
-        return entry_id
-
-    def xread(self, streams, count=None, block=None):
-        result = []
-        for stream, last_id in streams.items():
-            entries = self.streams.get(stream, [])
-            if last_id == "$":
-                cutoff = self._dollar_cutoff.setdefault(stream, len(entries))
-                new = entries[cutoff:]
-            else:
-                new = [(eid, f) for eid, f in entries if eid > last_id]
-            if new:
-                result.append((stream, new))
-        self.first_read_done.set()
-        return result
-
-
-def test_live_websocket_streams_a_published_event(config):
-    from pipeline.realtime.bus import EventBus
-    from pipeline.realtime.npm_listener import NPM_STREAM
-
-    bus = EventBus(url="")
-    bus.client = FakeRedisForLive()
-
-    client, _, _ = make_client(config, realtime_bus=bus)
-
-    with client.websocket_connect("/live") as websocket:
-        # - Waits for the route's first xread before publishing, rather than
-        #   racing it with a fixed sleep - publishing before that first read
-        #   would make the fake's "$" cutoff land past the new entry, and
-        #   the route would never see it, hanging receive_json() below
-        #   (this starlette version gives it no timeout). Waiting on the
-        #   event makes the ordering deterministic instead of merely
-        #   probable, and is what makes this exercise "push a new event to
-        #   an already-connected client" for real, rather than passing only
-        #   because the fake used to replay history on connect - the
-        #   route's own docstring says there is no such replay.
-        assert bus.client.first_read_done.wait(timeout=5), (
-            "route never made its first read - fixture or route wiring broke"
-        )
-
-        def publish_after_first_read():
-            bus.client.xadd(NPM_STREAM, {"data": '{"id": "npm_left-pad", "name": "left-pad"}'})
-
-        threading.Thread(target=publish_after_first_read, daemon=True).start()
-
-        message = websocket.receive_json()
-        assert message["stream"] == "npm"
-        assert message["event"]["id"] == "npm_left-pad"
-
-
-def test_fake_redis_for_live_does_not_replay_history_predating_the_connection():
-    """Pins real Redis $ semantics on the fixture itself, synchronously and
-    without going through a live WebSocket: an entry that existed before
-    the first "$" read for a stream is history, and real Redis's "$" means
-    "only entries added after this call", never a replay of it. This is
-    the exact bug the previous version of this fixture had - it returned
-    every existing entry on a "$" read - which let
-    test_live_websocket_streams_a_published_event above pass for the wrong
-    reason (see that test's comment) even though the route's own docstring
-    says there is no history replay on connect.
-    """
-    from pipeline.realtime.npm_listener import NPM_STREAM
-
-    fake = FakeRedisForLive()
-    fake.xadd(NPM_STREAM, {"data": '{"id": "npm_left-pad", "name": "left-pad"}'})
-
-    # - Nothing yet: the entry above predates this "$" read, so it must not
-    #   come back.
-    assert fake.xread({NPM_STREAM: "$"}) == []
-
-    # - Something published after that first "$" read must come back on the
-    #   next read, still passing "$" - matching the route, which only ever
-    #   advances last_ids away from "$" once it has actually received an
-    #   entry.
-    fake.xadd(NPM_STREAM, {"data": '{"id": "npm_is-thirteen", "name": "is-thirteen"}'})
-    result = fake.xread({NPM_STREAM: "$"})
-    assert len(result) == 1
-    stream, entries = result[0]
-    assert stream == NPM_STREAM
-    assert len(entries) == 1
-
-
-def test_live_websocket_with_no_bus_configured_closes_cleanly(config):
-    # - REDIS_REALTIME_URL unset is the common case. The endpoint must exist
-    #   and accept the connection, then close it, rather than the app
-    #   failing to start or the route 404ing outright.
-    from pipeline.realtime.bus import EventBus
-
-    bus = EventBus(url="")
-    client, _, _ = make_client(config, realtime_bus=bus)
-
-    with client.websocket_connect("/live") as websocket:
-        with pytest.raises(Exception):
-            websocket.receive_json()  # connection closes with nothing to send

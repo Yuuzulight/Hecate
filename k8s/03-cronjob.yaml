@@ -83,14 +83,6 @@ spec:
                       key: gitlab-token
                 - name: BATCH_SIZE
                   value: "500"
-                # - Where drain() (pipeline/realtime/drain.py) reads the
-                #   real-time npm/HN streams from. Without this the bus
-                #   builds with client=None and drain() silently no-ops
-                #   every run, even though the listeners keep publishing -
-                #   see ops/realtime/README.md for the Memurai bind-address
-                #   step this still needs before it actually connects.
-                - name: REDIS_REALTIME_URL
-                  value: redis://host.docker.internal:6380/0
               resources:
                 requests:
                   cpu: 500m

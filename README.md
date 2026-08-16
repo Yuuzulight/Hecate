@@ -81,7 +81,7 @@ pipeline/
   server.py       metrics endpoint
   main.py         wires it together
 dbt/models/       staging views, then facts and dimensions
-k8s/              namespace, database, the five scheduled jobs
+k8s/              namespace, database, the four scheduled jobs
 k8s/monitoring/   Prometheus, Alertmanager, Grafana
 ops/              scheduled task prompts
 tools/            one-off measurement scripts
@@ -172,13 +172,12 @@ kubectl create configmap grafana-dashboard -n hecate --from-file=hecate.json=k8s
 
 The autoscaler needs metrics-server, which Docker Desktop doesn't ship — the install and the `--kubelet-insecure-tls` patch it needs are documented at the top of `k8s/04-hpa.yaml`.
 
-Five jobs do the day's work:
+Four jobs do the day's work:
 
 | | | |
 |---|---|---|
 | 02:00 | `hecate-daily` | collect, discover, snapshot |
 | 03:00 | `hecate-dbt` | rebuild the models |
-| 03:45 | `hecate-forecast` | forecast star growth (optional, failure doesn't fail the day) |
 | 04:00 | `hecate-backup` | dump the database, keep seven |
 | Sun 05:00 | `hecate-dbt-full` | full refresh, clears incremental drift |
 
@@ -194,7 +193,7 @@ Then `kubectl port-forward svc/grafana 3000:3000 -n hecate` for the dashboard.
 
 ### If the cluster isn't up all day
 
-The five CronJobs ship **suspended**, because a fixed UTC time is no use on a machine that gets shut down — the schedule gets missed more often than met, and a missed snapshot is a permanent hole in the history.
+The four CronJobs ship **suspended**, because a fixed UTC time is no use on a machine that gets shut down — the schedule gets missed more often than met, and a missed snapshot is a permanent hole in the history.
 
 `ops/windowed-run.ps1` covers that case. It starts Docker Desktop, waits for the cluster, creates a Job from each CronJob template in order, checks a snapshot actually landed for today, and shuts Docker down again — a bit over two minutes on a weekday, nearer four on the Sunday that adds a full model refresh. If Docker was already up when it started, it leaves it up.
 
@@ -255,28 +254,6 @@ Three endpoints:
 The answer is built from SQL against the analytics models, not a similarity search — the questions people ask are aggregates, and the whole corpus is small enough that picking the right rows beats finding similar ones. The model is given those rows and told to answer from them and nothing else; every repository it cites is checked against what it was actually shown before you see it. If the data can't answer, it's supposed to say so, and there's an evaluation harness that scores whether it does.
 
 `RAG_ENABLED=0` turns answering off without touching anything else — useful if a bill starts moving. `/trending` keeps working.
-
-## Real-time ingestion
-
-npm publishes and Hacker News posts about tracked (or discoverable) projects
-show up within seconds, not the next day's batch — the only two of Hecate's
-six sources that genuinely support this without requiring a relationship
-with the source Hecate doesn't have (see `docs/specs/2026-08-14-realtime-
-ingestion-design.md` for why GitHub, GitLab, and PyPI stay batch).
-
-Two always-on Windows services (`ops/realtime/`) listen continuously and
-publish into a small, separate, always-on Redis instance (Memurai, since
-plain Redis has no first-party Windows build) — independent of the daily
-windowed cluster, which stays off most of the day exactly as before. The
-daily batch drains what was captured into the same `raw_repositories`/
-`social_mentions` tables everything else lands in — no separate schema.
-
-```bash
-powershell -ExecutionPolicy Bypass -File ops/realtime/install-realtime-services.ps1
-```
-
-Then connect to `ws://localhost:8001/live` (with the RAG API running) to see
-events as they're captured.
 
 ## Contributing
 

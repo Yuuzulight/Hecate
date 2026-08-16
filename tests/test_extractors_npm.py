@@ -155,31 +155,3 @@ def test_the_configured_registry_is_used(config, monkeypatch):
     calls = stub(extractor, [package("tslib")])
     extractor.fetch()
     assert calls[0][0].startswith("https://registry.example.com/-/v1/search")
-
-
-def test_registry_doc_to_row_maps_the_same_way_fetch_by_url_does():
-    from pipeline.extractors.npm import registry_doc_to_row
-
-    raw = {
-        "name": "left-pad",
-        "description": "String left pad",
-        "dist-tags": {"latest": "1.3.0"},
-        "time": {"created": "2014-12-01T00:00:00.000Z", "modified": "2020-03-01T00:00:00.000Z"},
-    }
-    row = registry_doc_to_row(raw)
-    assert row == {
-        "id": "npm_left-pad",
-        "source": "npm",
-        "name": "left-pad",
-        "url": "https://www.npmjs.com/package/left-pad",
-        "stars": 0,
-        "forks": 0,
-        "language": None,
-        "created_at": "2014-12-01T00:00:00.000Z",
-        "updated_at": "2020-03-01T00:00:00.000Z",
-        "description": "String left pad",
-        "downloads": None,
-        "extracted_at": row["extracted_at"],  # timestamp, asserted separately below
-    }
-    from pipeline.transformer import parse_timestamp
-    assert parse_timestamp(row["extracted_at"]) is not None

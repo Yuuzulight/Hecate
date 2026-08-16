@@ -22,9 +22,7 @@ from pipeline.extractors import (
 )
 from pipeline.loader import PostgreSQLLoader
 from pipeline.logger import get_logger
-from pipeline.matching import resolve, resolve_by_name
-from pipeline.realtime.bus import EventBus
-from pipeline.realtime.drain import drain
+from pipeline.matching import resolve_by_name
 from pipeline.transformer import RepositoryTransformer
 
 EXTRACTORS = (GitHubExtractor, NpmExtractor, PyPiExtractor, GitLabExtractor)
@@ -34,6 +32,37 @@ EXTRACTORS = (GitHubExtractor, NpmExtractor, PyPiExtractor, GitLabExtractor)
 #   transformer entirely and run after everything else - there has to be
 #   something stored before a link has anything to resolve against.
 MENTION_EXTRACTORS = (HackerNewsExtractor, LobstersExtractor)
+
+
+def resolve(loader: PostgreSQLLoader, mentions: list[dict]) -> list[dict]:
+    """Attach a repository id to each mention where one is known.
+
+    Mentions that match nothing are kept with a null id rather than dropped.
+    Most of Hacker News is about something we don't track, and that is the part
+    worth reading rather than the part to discard.
+    """
+    log = get_logger("main")
+    found = loader.resolve_urls({m["target_url"] for m in mentions})
+
+    # - Annotates rather than filters. An unmatched mention is kept with a null
+    #   repository_id, because a project being talked about before it is
+    #   tracked is the signal, not noise to be thrown away.
+    annotated = [
+        {**mention, "repository_id": found.get(mention["target_url"])}
+        for mention in mentions
+    ]
+
+    # - A link is certain. Anything below that came from prose.
+    for mention in annotated:
+        if mention["repository_id"]:
+            mention["match_confidence"] = 1.0
+
+    matched = sum(1 for m in annotated if m["repository_id"])
+    log.info(
+        "mentions resolved",
+        extra={"context": {"matched": matched, "of": len(annotated)}},
+    )
+    return annotated
 
 
 # - A post has to clear this before its project is worth an API call, and no
@@ -169,22 +198,6 @@ def run(config: Config) -> tuple[int, list[str]]:
                     extra={"context": {"source": extractor.source, "error": str(exc)}},
                 )
 
-        # - Refreshes what the always-on npm listener filters against. Here
-        #   specifically: after npm's own collection loop, so a package
-        #   found today is filterable today, and before the mention/drain
-        #   steps below, which don't depend on this ordering but keep every
-        #   real-time-related step grouped together for a reader.
-        bus = EventBus(config.redis_realtime_url)
-        try:
-            # - Bare package names, not raw_repositories' "npm_<name>" row
-            #   ids. npm_listener.handle_change looks packages up by the
-            #   CouchDB _changes feed's own `id`, which is the bare name -
-            #   the prefixed row id would never match anything there.
-            npm_names = {row["name"] for row in loader.rows_for("npm")}
-            bus.replace_tracked_npm(npm_names)
-        except Exception as exc:
-            log.exception("could not refresh tracked npm packages", extra={"context": {"error": str(exc)}})
-
         # - After every repository source, so links have something to match.
         mentions_ran = False
         for extractor_class in MENTION_EXTRACTORS:
@@ -220,16 +233,6 @@ def run(config: Config) -> tuple[int, list[str]]:
                     )
             except Exception as exc:
                 log.exception("discovery failed", extra={"context": {"error": str(exc)}})
-
-        # - After discovery (so newly-discovered repositories exist for
-        #   real-time HN mentions to resolve against) and before the
-        #   snapshot (so anything captured overnight counts in today's
-        #   history) - the same ordering reasoning the existing steps above
-        #   already follow.
-        try:
-            drain(bus, transformer, loader)
-        except Exception as exc:
-            log.exception("realtime drain failed", extra={"context": {"error": str(exc)}})
 
         # - Last, so it records the state everything else just produced. A
         #   failure here costs the day's history, not the day's data.

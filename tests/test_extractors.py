@@ -46,10 +46,6 @@ class FakeResponse:
     def json(self):
         return self._payload
 
-    def raise_for_status(self):
-        if not self.ok:
-            raise requests.HTTPError(f"{self.status_code} error", response=self)
-
 
 @pytest.fixture
 def config(monkeypatch):

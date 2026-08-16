@@ -76,16 +76,6 @@ class Config:
         #   a broken one: the retriever answers from PostgreSQL either way.
         self.redis_url = _optional("REDIS_URL")
 
-        # - The always-on event bus real-time listeners publish into, and the
-        #   daily batch drains from. Deliberately separate from redis_url
-        #   above: that one is disposable context cache, this one is a buffer
-        #   of real, not-yet-durable events. They must never point at the
-        #   same instance. Optional for the same reason as redis_url - a
-        #   deployment with no real-time ingestion configured is a working
-        #   configuration, not a broken one; the drain step below no-ops
-        #   cleanly when it's unset.
-        self.redis_realtime_url = _optional("REDIS_REALTIME_URL")
-
         # - Optional for the same reason. Without it nothing gets embedded and
         #   the similarity block is simply absent; every structured block still
         #   answers. The embedding job says so and exits non-zero, because a

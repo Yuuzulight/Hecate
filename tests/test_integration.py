@@ -180,8 +180,7 @@ def test_quality_checks_run_against_what_is_stored_not_what_was_sent(config, loa
     )
     run(config)
 
-    # - rows_for is called for both github (quality check) and npm (realtime refresh).
-    loader.rows_for.assert_any_call("github")
+    loader.rows_for.assert_called_once_with("github")
     assert seen["rows"][0]["id"] == "github_stored"
 
 
@@ -214,68 +213,3 @@ def test_main_can_be_run_as_a_module():
     )
     assert result.returncode == 0, result.stderr
     assert "main" in result.stdout
-
-
-def test_run_drains_the_realtime_streams(config, loader, monkeypatch):
-    use(monkeypatch, fake_extractor("github", [RAW]))
-    loader.rows_for.return_value = []
-
-    drain_calls = []
-    monkeypatch.setattr(main_module, "EventBus", lambda url: "fake-bus")
-    monkeypatch.setattr(
-        main_module, "drain",
-        lambda bus, transformer, loader: drain_calls.append(bus) or 0,
-    )
-
-    run(config)
-    assert drain_calls == ["fake-bus"]
-
-
-def test_run_refreshes_the_tracked_npm_set_after_npm_collection(config, loader, monkeypatch):
-    use(monkeypatch, fake_extractor("npm", [dict(RAW, id="npm_left-pad", source="npm", name="left-pad")]))
-    # - Stands in for what loader.rows_for("npm") would return after a real
-    #   run loaded these - the same method the quality checks already call,
-    #   reused rather than tracked separately.
-    #
-    # - Bare names, distinct per row: this is what the npm listener's own
-    #   CouchDB _changes feed hands handle_change as `id` (see
-    #   registry_doc_to_row and tests/test_realtime_npm_listener.py), not
-    #   raw_repositories' "npm_<name>" row id.
-    loader.rows_for.return_value = [
-        dict(RAW, id="npm_left-pad", source="npm", name="left-pad"),
-        dict(RAW, id="npm_is-thirteen", source="npm", name="is-thirteen"),
-    ]
-
-    refresh_calls = []
-
-    class FakeBus:
-        def replace_tracked_npm(self, ids):
-            refresh_calls.append(ids)
-
-    monkeypatch.setattr(main_module, "EventBus", lambda url: FakeBus())
-    monkeypatch.setattr(main_module, "drain", lambda bus, transformer, loader: 0)
-
-    run(config)
-    assert refresh_calls == [{"left-pad", "is-thirteen"}]
-
-
-def test_a_dead_realtime_bus_does_not_fail_the_run(config, loader, monkeypatch):
-    # - A refresh and a drain that both blow up must cost neither github's
-    #   data nor a reported failure - same "one source, one try block"
-    #   discipline every other step in run() already gets.
-    use(monkeypatch, fake_extractor("github", [RAW]))
-    loader.rows_for.return_value = []
-
-    class BrokenBus:
-        def replace_tracked_npm(self, ids):
-            raise RuntimeError("redis is down")
-
-    def broken_drain(bus, transformer, loader):
-        raise RuntimeError("redis is down")
-
-    monkeypatch.setattr(main_module, "EventBus", lambda url: BrokenBus())
-    monkeypatch.setattr(main_module, "drain", broken_drain)
-
-    loaded, failed = run(config)
-    assert loaded == 1
-    assert failed == []

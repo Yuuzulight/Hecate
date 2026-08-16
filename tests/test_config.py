@@ -13,7 +13,6 @@ ALL_VARS = [
     "GITHUB_TOKEN", "GITLAB_TOKEN", "NPM_REGISTRY", "PYPI_REGISTRY",
     "BATCH_SIZE", "RETRY_ATTEMPTS",
     "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "RAG_PROVIDER",
-    "REDIS_URL", "REDIS_REALTIME_URL",
 ]
 
 
@@ -96,12 +95,3 @@ def test_an_unknown_rag_provider_is_an_error(env):
     env.setenv("RAG_PROVIDER", "chatgpt")
     with pytest.raises(ConfigError, match="RAG_PROVIDER"):
         Config()
-
-
-def test_redis_realtime_url_defaults_to_blank(env):
-    assert Config().redis_realtime_url == ""
-
-
-def test_redis_realtime_url_is_read_when_set(env):
-    env.setenv("REDIS_REALTIME_URL", "redis://localhost:6380/0")
-    assert Config().redis_realtime_url == "redis://localhost:6380/0"

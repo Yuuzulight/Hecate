@@ -602,56 +602,13 @@
     },
     {
       "type": "table",
-      "title": "7-day forecast",
-      "description": "TimesFM zero-shot, gated on real history: a repository with fewer than 14 observed days shows as insufficient_history rather than a fabricated number. p10/p90 is the model's own uncertainty band, not a fixed confidence interval - see docs/specs/2026-08-15-timesfm-forecasting-design.md.",
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 0,
-        "y": 38
-      },
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "postgres"
-      },
-      "targets": [
-        {
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT r.name, f.baseline_stars, f.predicted_stars_p50, (f.predicted_stars_p50 - f.baseline_stars) AS predicted_gain, f.predicted_stars_p10, f.predicted_stars_p90, f.suppressed_reason FROM repository_forecasts f JOIN raw_repositories r ON r.id = f.repository_id WHERE f.horizon_days = 7 AND f.forecast_date = (SELECT max(forecast_date) FROM repository_forecasts) ORDER BY predicted_gain DESC NULLS LAST LIMIT 15"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "minWidth": 50
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "name"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 165
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "type": "table",
       "title": "Being discussed but not tracked",
       "description": "The discovery queue. Projects people are linking that the dataset does not contain - which is what the seeding, being ranked by cumulative popularity, excludes by construction. Anything clearing the score floor gets fetched on the next run. Owner is blank for npm and PyPI rows: a package page names one artifact and has no owner in its URL, so the column is empty rather than repeating the package name. The project name links out to the page it came from.",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 38
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -740,7 +697,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 38
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -868,7 +825,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 46
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -915,7 +872,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 65
+        "y": 56
       },
       "datasource": {
         "type": "prometheus",
@@ -946,7 +903,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 65
+        "y": 56
       },
       "datasource": {
         "type": "prometheus",
@@ -975,7 +932,7 @@
         "h": 9,
         "w": 16,
         "x": 0,
-        "y": 74
+        "y": 65
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1006,7 +963,7 @@
         "h": 9,
         "w": 8,
         "x": 16,
-        "y": 74
+        "y": 65
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1059,7 +1016,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 83
+        "y": 74
       },
       "datasource": {
         "type": "prometheus",

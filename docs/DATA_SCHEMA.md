@@ -46,27 +46,6 @@ One row per project per day. The **only** table with history — everything else
 
 The daily figure is the difference between two snapshots. That's the point of the table.
 
-## repository_forecasts
-
-One row per repository per forecast horizon per day - TimesFM 2.5 zero-shot,
-gated on real observed history rather than run unconditionally. See
-`docs/specs/2026-08-15-timesfm-forecasting-design.md` for where the gating
-thresholds came from.
-
-| column | notes |
-|---|---|
-| `horizon_days` | 7 or 30. Only 7 is spike-validated; 30 is gated on an untested heuristic (see the spec) |
-| `days_observed` | how much history was actually available for this repository, this day |
-| `baseline_stars` | stars as of `forecast_date` - what "predicted gain" is always computed against, not whatever today's count happens to be |
-| `predicted_stars_p10/p50/p90` | **null when suppressed.** The model's own uncertainty band, not a fixed confidence interval |
-| `suppressed_reason` | null if a real forecast was produced; `insufficient_history` below the gate |
-| `model_version` | the exact pinned checkpoint - see the spec for why this is pinned rather than "latest" |
-
-**Suppressed rows are written, not omitted** - the same "null is not zero"
-discipline every other table in this file follows. A repository showing
-`insufficient_history` on the dashboard is a fact about how much history
-exists, not a gap in the data.
-
 ## raw_repositories
 
 One row per repository or package, keyed on `id`. The loader upserts, so re-running refreshes rather than appends.

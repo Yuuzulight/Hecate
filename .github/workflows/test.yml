@@ -76,18 +76,10 @@ jobs:
       # - The suite passes whether or not the integration tests ran, because a
       #   skip is not a failure. That is how a green build ends up meaning
       #   nothing, so this checks they actually executed.
-      #
-      # - Greps for the specific DB-skip reason rather than the bare word
-      #   "skipped": test_forecast_model.py's timesfm-gated tests report a
-      #   real, expected, unrelated skip (this job doesn't install
-      #   requirements-forecast.txt) via a module-level pytest.importorskip,
-      #   which pytest reports regardless of -m filtering - a bare "skipped"
-      #   match would treat that expected skip as a failure to catch a DB
-      #   skip that never happened.
       - name: Integration tests must not have been skipped
         run: |
           pytest -m integration -q | tee integration.txt
-          if grep -q "set HECATE_INTEGRATION=1 to run against a real database" integration.txt; then
+          if grep -q "skipped" integration.txt; then
             echo "::error::integration tests skipped - they are supposed to run against the service container"
             exit 1
           fi
