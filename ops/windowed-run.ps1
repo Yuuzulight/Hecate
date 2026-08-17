@@ -208,6 +208,24 @@ function Invoke-HecateJob($CronJob, $Stamp) {
     #   Logs are grabbed the moment failure is seen, because the controller
     #   deletes the pod within a second or two of the backoff limit and after
     #   that there is nothing left to explain the night with.
+    # - A container that never starts is invisible to the two checks below.
+    #   There is no exit code, so .status.failed stays empty, nothing counts
+    #   against backoffLimit, and the kubelet retries the same error forever.
+    #   hecate-forecast spent the entire 1200s ceiling that way on
+    #   2026-08-17 and was logged as "still running" - a pod that had not run
+    #   an instruction, described as slow.
+    #
+    #   Waiting reasons rather than pod phase, because the phase is Pending
+    #   for both this and a node that is simply busy, and only one of those
+    #   is worth abandoning the job over.
+    $unstartable = @(
+        'ErrImageNeverPull', 'ErrImagePull', 'ImagePullBackOff',
+        'InvalidImageName', 'CreateContainerConfigError'
+    )
+    # - Given a minute before it counts: ImagePullBackOff in particular is
+    #   also what a perfectly healthy pull looks like on the way up.
+    $stuckSince = $null
+
     $deadline = (Get-Date).AddSeconds($JobTimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $succeeded = kubectl get "job/$name" -n hecate -o 'jsonpath={.status.succeeded}' 2>$null
@@ -221,6 +239,18 @@ function Invoke-HecateJob($CronJob, $Stamp) {
             $tail = ''
             if ($log) { $tail = ' | ' + (($log | Select-Object -Last 5) -join ' ') }
             return [ordered]@{ job = $CronJob; ok = $false; detail = "failed after $failed attempt(s)$tail" }
+        }
+
+        $waiting = kubectl get pods -n hecate -l "job-name=$name" -o 'jsonpath={.items[*].status.containerStatuses[*].state.waiting.reason}' 2>$null
+        $stuck = @(($waiting -split '\s+') | Where-Object { $unstartable -contains $_ })
+        if ($stuck.Count -gt 0) {
+            if ($null -eq $stuckSince) {
+                $stuckSince = Get-Date
+            } elseif (((Get-Date) - $stuckSince).TotalSeconds -ge 60) {
+                return [ordered]@{ job = $CronJob; ok = $false; detail = "pod cannot start: $($stuck[0])" }
+            }
+        } else {
+            $stuckSince = $null
         }
 
         Start-Sleep -Seconds 5
