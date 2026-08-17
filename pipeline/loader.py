@@ -505,15 +505,23 @@ class PostgreSQLLoader:
         self.log.info("forecasts written", extra={"context": {"rows": len(values)}})
         return len(values)
 
-    def forecast_rows_for(self, forecast_date) -> list[dict]:
+    def forecast_rows_for(self, forecast_date, repository_ids=None) -> list[dict]:
         """Read back what's stored for one date - the row-count sanity
-        check runs on this rather than trusting the job's own exit code."""
+        check runs on this rather than trusting the job's own exit code.
+
+        Narrowed to repository_ids when the caller only wants the rows it
+        wrote itself. A date on its own is not one run: an aborted earlier
+        run leaves rows for repositories today's ranking no longer picks,
+        and counting those against this run's total is arithmetic about
+        somebody else's work."""
         columns = ", ".join(FORECAST_COLUMNS)
+        sql = f"SELECT {columns} FROM repository_forecasts WHERE forecast_date = %s"
+        params = [forecast_date]
+        if repository_ids is not None:
+            sql += " AND repository_id = ANY(%s)"
+            params.append(list(repository_ids))
         with self.transaction() as cur:
-            cur.execute(
-                f"SELECT {columns} FROM repository_forecasts WHERE forecast_date = %s",
-                (forecast_date,),
-            )
+            cur.execute(sql, tuple(params))
             return [dict(zip(FORECAST_COLUMNS, row)) for row in cur.fetchall()]
 
     def close(self) -> None:

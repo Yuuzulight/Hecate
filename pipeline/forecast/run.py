@@ -108,7 +108,16 @@ def run(config: Config) -> dict:
         #   trusting write_forecasts's own return value - the same
         #   discipline ops/windowed-run.ps1 already applies to the day as
         #   a whole, applied here to this one job.
-        stored = loader.forecast_rows_for(today)
+        #
+        # - Scoped to the repositories this run wrote, not to the whole
+        #   date. Counting the date meant any leftover row failed the job
+        #   on arithmetic that had nothing to do with the write: on
+        #   2026-08-16 an aborted run's 12 rows made a correct 100-row run
+        #   read back 112 and fail, every time, until they were deleted by
+        #   hand. It also meant the job could not survive its own retry,
+        #   since restartPolicy OnFailure makes that a second run on the
+        #   same date.
+        stored = loader.forecast_rows_for(today, repository_ids={r["repository_id"] for r in rows})
         if len(stored) != len(rows):
             raise ForecastError(
                 f"expected {len(rows)} forecast rows for {today}, found {len(stored)}"
