@@ -21,7 +21,13 @@ with bounds as (
         repository_id,
         max(captured_on) as latest_on,
         min(captured_on) as first_seen_on,
-        count(*) as days_observed
+        -- - Calendar days elapsed, not a row count. A row count only equals
+        --   calendar age when every day has a snapshot, and a missed run
+        --   (see ops/logs/run-log.jsonl) breaks that silently and permanently
+        --   for any repository whose history straddles the gap. Date
+        --   subtraction can't be fooled by a missing row - it matches the
+        --   captured_on arithmetic the growth windows below already use.
+        max(captured_on) - min(captured_on) as days_observed
     from {{ source('raw', 'repository_snapshots') }}
     group by repository_id
 
