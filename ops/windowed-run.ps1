@@ -183,7 +183,7 @@ function Remove-PreviousWindowedJobs {
     }
 }
 
-function Invoke-HecateJob($CronJob, $Stamp) {
+function Invoke-HecateJob($CronJob, $Stamp, [int]$TailLines = 5) {
     $name = "$CronJob-w$Stamp"
     Write-Step "running $CronJob"
     # - Capturing rather than discarding, because "could not create job" reads
@@ -217,9 +217,9 @@ function Invoke-HecateJob($CronJob, $Stamp) {
 
         $failed = kubectl get "job/$name" -n hecate -o 'jsonpath={.status.failed}' 2>$null
         if ($failed -and [int]$failed -ge 1) {
-            $log = kubectl logs "job/$name" -n hecate --tail=15 2>$null
+            $log = kubectl logs "job/$name" -n hecate --tail=$TailLines 2>$null
             $tail = ''
-            if ($log) { $tail = ' | ' + (($log | Select-Object -Last 5) -join ' ') }
+            if ($log) { $tail = ' | ' + (($log -join ' ')) }
             return [ordered]@{ job = $CronJob; ok = $false; detail = "failed after $failed attempt(s)$tail" }
         }
 
@@ -243,6 +243,37 @@ function Wait-ForDatabase([int]$TimeoutSeconds = 300) {
     while ((Get-Date) -lt $deadline) {
         kubectl exec -n hecate postgres-0 -- psql -U dataflow -d hecate -t -A -c 'SELECT 1' 2>$null | Out-Null
         if ($LASTEXITCODE -eq 0) { return $true }
+        Start-Sleep -Seconds 5
+    }
+    return $false
+}
+
+# - Docker and postgres coming up says nothing about whether a pod can reach
+#   the internet - the two are independent. CoreDNS and the API server come
+#   back fine after a stale-socket recovery, but the WSL2<->host network
+#   bridge that egress actually depends on sometimes does not, and that gap
+#   is invisible to every readiness check above. Every "no snapshot" day so
+#   far (2026-08-18, 08-28, 09-04) happened only on a start that needed
+#   Clear-StaleSockets, and in each case hecate-daily died silently on its
+#   first outbound call - no exception logged, which points at the network
+#   path itself rather than anything GitHub-side.
+#
+#   A short-lived pod is used rather than exec'ing into an existing one,
+#   because it is the only way to test the exact path a real job pod will
+#   use without assuming some other service is already up and happens to
+#   have curl installed.
+#
+#   $Url is a parameter because hecate-forecast depends on a second host
+#   (huggingface.co) that the daily extractors never touch - see the
+#   forecast-specific call below.
+function Wait-ForInternet([string]$Url = 'https://api.github.com', [int]$TimeoutSeconds = 60) {
+    kubectl delete pod hecate-net-check -n hecate --ignore-not-found --force --grace-period=0 2>$null | Out-Null
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        kubectl run hecate-net-check --image=curlimages/curl:8.10.1 --restart=Never -n hecate --rm -i --quiet `
+            --command -- curl -fsS --max-time 5 $Url -o /dev/null 2>$null
+        if ($LASTEXITCODE -eq 0) { return $true }
+        kubectl delete pod hecate-net-check -n hecate --ignore-not-found --force --grace-period=0 2>$null | Out-Null
         Start-Sleep -Seconds 5
     }
     return $false
@@ -310,6 +341,12 @@ try {
         return
     }
 
+    # - Only checked once actually collecting - StartOnly has nothing that
+    #   needs the internet, and there is no reason to make that path slower
+    #   or add a dependency it does not have.
+    if (-not (Wait-ForInternet)) { throw 'pod network has no outbound internet access' }
+    Write-Step 'internet reachable'
+
     Remove-PreviousWindowedJobs
 
     $stamp = Get-Date -Format 'yyyyMMddHHmm'
@@ -331,7 +368,27 @@ try {
     $optional = @('hecate-forecast', 'hecate-embed')
 
     foreach ($cj in $sequence) {
-        $r = Invoke-HecateJob $cj $stamp
+        # - load_model() (pipeline/forecast/model.py) calls HuggingFace's
+        #   from_pretrained() with no timeout of its own, unlike the
+        #   extractors' 10s-timeout-plus-retry requests session. The same
+        #   transient egress gap Wait-ForInternet exists for above would
+        #   otherwise hang this job silently for the full JobTimeoutSeconds
+        #   instead of failing fast - checked here rather than only once at
+        #   the top of the run because minutes pass, and a fresh job, between
+        #   that check and this one.
+        if ($cj -eq 'hecate-forecast' -and -not (Wait-ForInternet -Url 'https://huggingface.co')) {
+            $r = [ordered]@{ job = $cj; ok = $false; detail = 'skipped: huggingface.co unreachable' }
+        } elseif ($cj -eq 'hecate-forecast') {
+            # - The reachability check above passed once (2026-09-08) and the
+            #   job still died right after "forecast targets selected" with
+            #   nothing more in a 5-line tail - not enough to tell a slow CDN
+            #   redirect from an OOM kill from anything else. A bigger tail
+            #   costs nothing extra since the pod is about to be deleted
+            #   anyway; 5 lines was just too little to diagnose with.
+            $r = Invoke-HecateJob $cj $stamp 40
+        } else {
+            $r = Invoke-HecateJob $cj $stamp
+        }
         $r.optional = ($optional -contains $cj)
         $run.jobs += $r
         # - Keep going after a failure. A broken dbt run should not cost you
