@@ -9,6 +9,7 @@ retriever carries on against PostgreSQL.
 
 import hashlib
 import json
+import os
 
 import redis
 
@@ -48,11 +49,13 @@ class ContextCache:
         self.log = get_logger("rag.cache")
         self.client = None
         if url:
-            self.client = redis.from_url(
+            connect = redis.RedisCluster.from_url if os.environ.get("REDIS_CLUSTER") == "1" else redis.from_url
+            self.client = connect(
                 url,
                 socket_connect_timeout=SOCKET_TIMEOUT_SECONDS,
                 socket_timeout=SOCKET_TIMEOUT_SECONDS,
                 decode_responses=True,
+                protocol=int(os.environ.get("REDIS_PROTOCOL", "3")),
             )
 
     def get(self, key: str) -> dict | None:

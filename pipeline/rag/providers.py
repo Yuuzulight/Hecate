@@ -23,6 +23,7 @@ away either.
 """
 
 from dataclasses import dataclass
+import os
 
 from pipeline.config import Config
 from pipeline.exceptions import ConfigError
@@ -58,7 +59,10 @@ SPECS = {
 def spec_for(config: Config) -> ProviderSpec:
     # config.rag_provider is already validated at Config construction time,
     # so this is a lookup, not a second validation.
-    return SPECS[config.rag_provider]
+    spec = SPECS[config.rag_provider]
+    if config.rag_provider == "openai" and os.environ.get("RAG_MODEL") == "gpt-5-mini":
+        return ProviderSpec("openai", "gpt-5-mini", 0.25, 2.00)
+    return spec
 
 
 # - Which Config attribute each provider's key lives under. The env var name
@@ -132,12 +136,13 @@ def build_chat_model(config: Config, max_tokens: int, effort: str | None = None)
     """
     spec = spec_for(config)
     key = require_key(config, spec)
+    model_name = os.environ.get("RAG_MODEL", spec.model)
 
     if spec.name == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         return ChatGoogleGenerativeAI(
-            model=spec.model,
+            model=model_name,
             google_api_key=key,
             max_output_tokens=max_tokens,
         )
@@ -150,7 +155,7 @@ def build_chat_model(config: Config, max_tokens: int, effort: str | None = None)
         #   value with trailing whitespace (routine for secrets mounted from
         #   files, e.g. a k8s secret volume) would authenticate with a
         #   different byte string than the one require_key just validated.
-        kwargs = {"model": spec.model, "max_tokens": max_tokens, "api_key": key}
+        kwargs = {"model": model_name, "max_tokens": max_tokens, "api_key": key}
         if effort is not None:
             kwargs["output_config"] = {"effort": effort}
         return ChatAnthropic(**kwargs)
@@ -159,9 +164,10 @@ def build_chat_model(config: Config, max_tokens: int, effort: str | None = None)
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            model=spec.model,
+            model=model_name,
             api_key=key,
             max_completion_tokens=max_tokens,
+            **({"reasoning_effort": os.environ["RAG_REASONING_EFFORT"]} if os.environ.get("RAG_REASONING_EFFORT") else {}),
         )
 
     raise ConfigError(f"no builder for provider {spec.name!r}")  # pragma: no cover

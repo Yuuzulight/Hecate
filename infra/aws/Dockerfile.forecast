@@ -1,0 +1,7 @@
+FROM ghcr.io/yuuzulight/hecate-forecast:2.0.0
+USER root
+RUN pip install --no-cache-dir boto3==1.43.113
+COPY --chown=hecate:hecate pipeline/ /app/pipeline/
+COPY --chown=hecate:hecate infra/aws/runtime.py /app/aws_runtime.py
+USER hecate
+CMD ["python", "aws_runtime.py", "pipeline.forecast.run"]

@@ -17,6 +17,7 @@ import math
 import sys
 
 import redis
+import os
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -99,11 +100,13 @@ class EmbeddingStore:
         self.api_key = config.openai_api_key
         self.client = client
         if self.client is None and config.redis_url:
-            self.client = redis.from_url(
+            connect = redis.RedisCluster.from_url if os.environ.get("REDIS_CLUSTER") == "1" else redis.from_url
+            self.client = connect(
                 config.redis_url,
                 socket_connect_timeout=SOCKET_TIMEOUT_SECONDS,
                 socket_timeout=SOCKET_TIMEOUT_SECONDS,
                 decode_responses=True,
+                protocol=int(os.environ.get("REDIS_PROTOCOL", "3")),
             )
 
         self.session = requests.Session()
@@ -200,7 +203,7 @@ class EmbeddingStore:
             vectors, used = self._embed([text for _, _, text in batch])
             tokens += used
 
-            pipe = self.client.pipeline()
+            pipe = self.client.pipeline(transaction=False)
             for (repository_id, digest, _), vector in zip(batch, vectors):
                 # - Vector before digest. A crash between the two leaves a
                 #   vector with no digest, which the next run simply re-embeds.

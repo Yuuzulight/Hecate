@@ -1,0 +1,20 @@
+aws_region = "ap-southeast-2"
+project    = "hecate"
+schedule_timezone = "Asia/Singapore"
+
+# Aurora Serverless PostgreSQL scales down when idle.
+aurora_min_capacity = 0
+aurora_max_capacity = 1
+aurora_seconds_until_auto_pause = 900
+
+# Legacy ECS/ALB RAG service. Keep disabled: the production public API is
+# Lambda + API Gateway + Cognito, configured in web.tf.
+enable_rag_api = false
+
+# Set to false for an infra-only apply.
+enable_schedules = true
+enable_embed_schedule = false
+enable_forecast_schedule = false
+
+# Only used by the disabled legacy ECS/ALB RAG service.
+rag_allowed_cidr_blocks = ["0.0.0.0/0"]

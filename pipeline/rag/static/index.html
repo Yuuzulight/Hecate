@@ -84,6 +84,7 @@
 <body>
 <main>
   <h1>Hecate</h1>
+  <button id="signin" type="button" hidden style="float:right;margin-bottom:12px">Sign in</button>
   <div class="sub">Ask about what is growing, what is being discussed, and what has gone quiet.</div>
 
   <form id="form">
@@ -101,6 +102,51 @@ const API = location.protocol === "file:" ? "http://127.0.0.1:8001" : "";
 
 const out = document.getElementById("form");
 const results = document.getElementById("out");
+let cloudAuth = null;
+const signInButton = document.getElementById("signin");
+const base64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const redirectUri = location.origin + "/";
+function accessToken() {
+  if (Number(sessionStorage.getItem("hecate-token-expiry")) <= Date.now()) return null;
+  return sessionStorage.getItem("hecate-access-token");
+}
+async function signIn() {
+  if (!cloudAuth) return;
+  if (accessToken()) {
+    sessionStorage.removeItem("hecate-access-token");
+    sessionStorage.removeItem("hecate-token-expiry");
+    location.assign(cloudAuth.domain + "/logout?" + new URLSearchParams({client_id: cloudAuth.clientId, logout_uri: redirectUri}));
+    return;
+  }
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  const state = base64url(crypto.getRandomValues(new Uint8Array(24)));
+  sessionStorage.setItem("hecate-pkce", verifier);
+  sessionStorage.setItem("hecate-oauth-state", state);
+  const challenge = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  location.assign(cloudAuth.domain + "/oauth2/authorize?" + new URLSearchParams({client_id: cloudAuth.clientId, response_type: "code", scope: "openid profile", redirect_uri: redirectUri, code_challenge_method: "S256", code_challenge: challenge, state}));
+}
+signInButton.addEventListener("click", () => signIn().catch(error => renderDown(error.message)));
+const authReady = (async () => {
+  if (location.protocol === "file:") return;
+  const response = await fetch("/auth-config");
+  if (!response.ok) return;
+  cloudAuth = await response.json();
+  signInButton.hidden = false;
+  const params = new URLSearchParams(location.search);
+  if (params.has("code")) {
+    if (params.get("state") !== sessionStorage.getItem("hecate-oauth-state")) throw new Error("Sign-in session expired. Please sign in again.");
+    const verifier = sessionStorage.getItem("hecate-pkce");
+    sessionStorage.removeItem("hecate-oauth-state");
+    sessionStorage.removeItem("hecate-pkce");
+    history.replaceState({}, "", "/");
+    const tokenResponse = await fetch(cloudAuth.domain + "/oauth2/token", {method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: new URLSearchParams({grant_type: "authorization_code", client_id: cloudAuth.clientId, code: params.get("code"), redirect_uri: redirectUri, code_verifier: verifier})});
+    if (!tokenResponse.ok) throw new Error("Sign-in could not complete. Please try again.");
+    const tokens = await tokenResponse.json();
+    sessionStorage.setItem("hecate-access-token", tokens.access_token);
+    sessionStorage.setItem("hecate-token-expiry", String(Date.now() + tokens.expires_in * 1000));
+  }
+  signInButton.textContent = accessToken() ? "Sign out" : "Sign in";
+})().catch(error => renderDown(error.message));
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -115,6 +161,7 @@ function renderDown(detail) {
   card.append(el("div", null, detail));
   const how = el("div");
   how.style.marginTop = "10px";
+  if (cloudAuth) { results.prepend(card); return; }
   how.append(el("div", null, "This cluster is only up when someone starts it. To start it:"));
   for (const line of [
     "ops\\windowed-run.ps1 -StartOnly",
@@ -189,9 +236,11 @@ out.addEventListener("submit", async (event) => {
   const timer = setTimeout(() => stop.abort(), 30000);
 
   try {
+    await authReady;
+    if (cloudAuth && !accessToken()) { await signIn(); return; }
     const response = await fetch(API + "/ask", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(cloudAuth ? {Authorization: "Bearer " + accessToken()} : {}) },
       body: JSON.stringify({ question }),
       signal: stop.signal,
     });

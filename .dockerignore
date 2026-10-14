@@ -15,6 +15,13 @@ tests/
 k8s/
 docs/
 .env
+.env.*
+infra/aws/.terraform/
+infra/aws/*.tfstate*
+infra/aws/*.tfvars
+infra/aws/*.tfplan
+.docker-deploy/
+infra/aws/*.dump
 *.md
 
 # - dbt/ is deliberately not excluded: the dbt stage copies it. The pipeline

@@ -14,6 +14,7 @@ instructions: descriptions come from strangers on the internet.
 """
 
 import json
+import os
 import time
 from typing import Literal
 
@@ -44,7 +45,7 @@ EFFORT = "medium"
 # - A cap rather than a target. Thinking is on by default on this model and
 #   counts against the same budget, so a tight ceiling truncates the answer
 #   rather than the reasoning.
-MAX_TOKENS = 16000
+MAX_TOKENS = int(os.environ.get("RAG_MAX_TOKENS", "16000"))
 
 SYSTEM_PROMPT = """You answer questions about a repository-intelligence dataset.
 
@@ -54,6 +55,9 @@ aggregated from the warehouse for this question.
 How to answer:
 - Use only the CONTEXT. Do not use anything you remember about these projects,
   and do not estimate, extrapolate, or reason from what is likely to be true.
+- The forecast_estimates block contains model predictions, not observations;
+  label them as estimates, state their horizon and date, preserve uncertainty,
+  and do not present suppressed forecasts as valid predictions.
 - If the CONTEXT does not contain the answer, say so plainly and set confidence
   to "low". "The data does not cover this" is a correct and useful answer; an
   invented one is not.

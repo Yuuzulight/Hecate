@@ -455,6 +455,15 @@ class WarehouseRetriever:
 
     # ---- what the chain actually calls
 
+    def forecasts(self, limit: int = 10) -> list[dict]:
+        return self._rows(
+            """SELECT f.*, r.name FROM repository_forecasts f
+               JOIN raw_repositories r ON r.id = f.repository_id
+               WHERE f.forecast_date = (SELECT max(forecast_date) FROM repository_forecasts)
+               ORDER BY f.predicted_stars_p50 DESC NULLS LAST, f.repository_id
+               LIMIT %s""", (max(1, min(limit, 50)),),
+        )
+
     def context_for(self, question: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
         """Everything relevant to one question, bounded and already aggregated.
 
@@ -492,6 +501,8 @@ class WarehouseRetriever:
         similar = self.similar_repositories(question)
         if similar:
             context["similar_by_description"] = similar
+        if re.search(r"forecast|predict|next week|next month|outlook", question, re.I):
+            context["forecast_estimates"] = self.forecasts(limit)
 
         self.log.info(
             "context built",

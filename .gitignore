@@ -27,3 +27,19 @@ ops/logs/
 
 # Isolated worktrees for in-progress feature branches.
 .worktrees/
+
+# Terraform local state and machine/account-specific variables.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+.docker-deploy/
+infra/aws/*.dump
+infra/aws/*.tfplan
+infra/aws/backend.hcl
+infra/aws/deployment-outputs.json
+infra/aws/task-*.json
+infra/aws/migration-counts.json

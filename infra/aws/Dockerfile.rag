@@ -1,0 +1,10 @@
+FROM python:3.11-slim-trixie
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+COPY requirements.txt requirements-rag.txt ./
+RUN pip install --no-cache-dir -r requirements-rag.txt boto3==1.43.113 developer-toolkit-elasticache awslambdaric mangum
+COPY pipeline/ ./pipeline/
+COPY infra/aws/runtime.py ./aws_runtime.py
+COPY infra/aws/lambda_api.py ./lambda_api.py
+ENTRYPOINT ["python", "-m", "awslambdaric"]
+CMD ["lambda_api.handler"]

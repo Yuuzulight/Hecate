@@ -102,7 +102,8 @@ class FakeRedis:
         self._guard()
         self.hashes.setdefault(key, {})[field] = value
 
-    def pipeline(self):
+    def pipeline(self, transaction=True):
+        assert transaction is False, "Embedding writes must work across serverless Redis slots"
         return FakePipeline(self)
 
 

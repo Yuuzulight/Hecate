@@ -39,6 +39,8 @@ GitHub · npm · PyPI · GitLab          Hacker News · Lobsters
 
 ## Running it
 
+The daily AWS deployment runs at 04:00 Singapore time without a local machine. Deployment details, migration results, and cloud operations are in [infra/aws/README.md](infra/aws/README.md). The instructions below are for local development.
+
 You need Docker and Python 3.11 or newer.
 
 ```bash
