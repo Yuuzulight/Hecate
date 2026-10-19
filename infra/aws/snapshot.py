@@ -29,10 +29,12 @@ SELECT r.name, g.stars_gained_7d FROM {MARTS}.fct_repository_growth g
 JOIN {MARTS}.fct_repositories r ON r.id = g.repository_id
 WHERE g.stars_gained_7d > 0 ORDER BY g.stars_gained_7d DESC, r.name LIMIT {TOP}
 """
+# A project with one signal scores that signal alone, and newly discovered repositories with only a
+# capped attention score all tie at 100. Require two signals so the ranking compares like with like.
 MOMENTUM = f"""
 SELECT r.name, m.momentum FROM {MARTS}.fct_momentum m
 JOIN {MARTS}.fct_repositories r ON r.id = m.repository_id
-WHERE m.momentum IS NOT NULL ORDER BY m.momentum DESC, r.name LIMIT {TOP}
+WHERE m.signals_measured >= 2 ORDER BY m.momentum DESC, m.signals_measured DESC, m.stars DESC NULLS LAST, r.name LIMIT {TOP}
 """
 
 
@@ -103,7 +105,7 @@ text{{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif}}
 {kpi}
 <text x="32" y="168" class="h">Top star gainers, 7 days</text>
 {rows(data["gainers"], 32, 184, 316, lambda v: f"+{v:,}")}
-<text x="412" y="168" class="h">Highest momentum</text>
+<text x="412" y="168" class="h">Highest momentum <tspan class="mut">(2+ signals)</tspan></text>
 {rows(data["momentum"], 412, 184, 316, lambda v: f"{v:.1f}")}
 <text x="32" y="444" class="mut">{footer}</text>
 </svg>
