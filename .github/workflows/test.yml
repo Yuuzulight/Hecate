@@ -68,6 +68,9 @@ jobs:
           #   needs them even though the daily job never does. -eval includes
           #   -rag, so this one line covers both.
           pip install -r requirements-eval.txt
+          # - The AWS batch, API and snapshot tests import boto3, which only the
+          #   AWS image installs; keep the version in step with infra/aws/Dockerfile.
+          pip install boto3==1.43.113
           pip install pytest pytest-cov
 
       - name: Test
