@@ -10,6 +10,7 @@ COPY pipeline/ ./pipeline/
 COPY dbt/ ./dbt/
 COPY infra/aws/batch.py ./aws_batch.py
 COPY infra/aws/runtime.py ./aws_runtime.py
+COPY infra/aws/snapshot.py ./aws_snapshot.py
 RUN chown -R hecate:hecate /app
 USER hecate
 CMD ["python", "aws_batch.py"]

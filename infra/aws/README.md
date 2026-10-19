@@ -13,6 +13,7 @@ The deployed batch runs daily at **04:00 Asia/Singapore** in **ap-southeast-2 (S
 - Valkey Serverless stores persistent repository embeddings for semantic retrieval. It uses IAM authentication and TLS, so no cache password is stored.
 - A separate on-demand Fargate task runs the TimesFM forecast workload; it is invoked by the daily batch and is not an always-on service.
 - Lambda and API Gateway host the public Hecate web/API endpoint. Cognito protects questions and warehouse views; the generated owner sign-in is stored only in the `hecate-prod-owner-login` Secrets Manager secret.
+- A separate public-read S3 bucket (`public_snapshot_url` output) holds only `snapshot/weekly-growth.svg` and `snapshot/summary.json`; see [Public snapshot](#public-snapshot).
 - Secrets Manager stores source credentials. ECS gets scoped access to the warehouse and export bucket.
 - CloudWatch Logs retains job output for 30 days.
 - A separate private, encrypted, versioned S3 bucket stores Terraform state with native S3 locking.
@@ -72,6 +73,26 @@ aws ecs run-task --profile hecate --region ap-southeast-2 --cluster hecate-prod 
 Task overrides can run `python aws_batch.py --backup-only` or `--verify`. To restore into an **empty** warehouse, use `--restore-key backups/<dump-name>.dump`. Restore refuses an existing warehouse and runs in one transaction.
 
 The runner waits for Aurora to resume, refreshes IAM tokens before child processes, holds a database advisory lock to reject overlapping runs, and attempts a backup even if a pipeline/dbt stage fails. Failures return a nonzero task exit code. Scheduler retries task dispatch failures, not a running container's application failure; inspect CloudWatch and ECS stopped-task exit codes.
+
+## Public snapshot
+
+The last step of the daily batch (after dbt and the forecast task) runs `snapshot.py` (copied into the image as `aws_snapshot.py`). It reads the dbt marts and three row counts, then writes two files to the public bucket:
+
+- `snapshot/weekly-growth.svg`: stars gained over 7 and 30 days, top star gainers and highest momentum across the tracked set.
+- `snapshot/summary.json`: counts of repositories, snapshot days and mentions, star gains, the data date and the date generated.
+
+Only statistics on public repositories and packages are published. Run history, job errors, mention text, secrets and anything from the Cognito-protected API are not read or written. The bucket policy allows anonymous `s3:GetObject` on `snapshot/*` only; the task role may `s3:PutObject` there and nothing else. The private exports bucket (backups) is unchanged. No credentials are needed anywhere outside AWS.
+
+The step is fail-soft: it has a 5-minute timeout, and any error is logged as `Public snapshot skipped` without failing the batch. It is skipped when `HECATE_PUBLIC_BUCKET` is unset.
+
+Rolling it out: build and push a new image, set `pipeline_image`, apply, then run the batch manually. Read the URLs from `terraform output public_snapshot_url`:
+
+```text
+<public_snapshot_url>/weekly-growth.svg
+<public_snapshot_url>/summary.json
+```
+
+Objects are served with `Cache-Control: max-age=3600`, and GitHub proxies and caches README images, so the embedded chart is hours behind the batch, not live. The bucket sets CORS `GET *` so a site can fetch `summary.json`. If the account ever enables S3 Block Public Access at account level, the policy will be rejected at apply time.
 
 ## Costs and limits
 

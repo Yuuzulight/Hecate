@@ -32,6 +32,15 @@ class BatchTests(unittest.TestCase):
             backup.assert_called_once()
         self.connection.close.assert_called_once()
 
+    def test_snapshot_failure_does_not_fail_batch(self):
+        def run(command, env=None, timeout=7200):
+            if "aws_snapshot" in command:
+                raise subprocess.CalledProcessError(1, "snapshot")
+        with patch.dict(os.environ, {"HECATE_PUBLIC_BUCKET": "public"}), patch.object(batch, "run_command", side_effect=run) as run_mock, patch.object(batch, "backup") as backup:
+            self.assertEqual(self.invoke([]), 0)
+            self.assertTrue(any("aws_snapshot" in call.args[0] for call in run_mock.call_args_list))
+            backup.assert_called_once()
+
     def test_overlap_does_not_run_or_backup(self):
         self.cursor.fetchone.return_value = (False,)
         with patch.object(batch, "run_command") as run, patch.object(batch, "backup") as backup:

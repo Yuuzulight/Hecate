@@ -28,6 +28,11 @@ output "exports_bucket" {
   value       = aws_s3_bucket.exports.bucket
 }
 
+output "public_snapshot_url" {
+  description = "Public base URL of weekly-growth.svg and summary.json."
+  value       = "https://${aws_s3_bucket.public.bucket_regional_domain_name}/snapshot"
+}
+
 output "api_credentials_secret_arn" {
   description = "Secrets Manager ARN for source and RAG API credentials."
   value       = aws_secretsmanager_secret.api_credentials.arn
