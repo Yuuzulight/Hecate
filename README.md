@@ -229,6 +229,30 @@ If the machine does stay on, unsuspend them and ignore all of the above:
 kubectl patch cronjob hecate-daily -n hecate -p '{"spec":{"suspend":false}}'
 ```
 
+### Real-time ingestion (optional, local only)
+
+This is an optional local feature. It is not installed on the production machine and is not part of the AWS deployment, which has no always-on listeners and no `/live` stream.
+
+npm publishes and Hacker News posts about tracked (or discoverable) projects
+show up within seconds, not the next day's batch — the only two of Hecate's
+six sources that genuinely support this without requiring a relationship
+with the source Hecate doesn't have (see `docs/specs/2026-08-14-realtime-
+ingestion-design.md` for why GitHub, GitLab, and PyPI stay batch).
+
+Two always-on Windows services (`ops/realtime/`) listen continuously and
+publish into a small, separate, always-on Redis instance (Memurai, since
+plain Redis has no first-party Windows build) — independent of the daily
+windowed cluster, which stays off most of the day exactly as before. The
+daily batch drains what was captured into the same `raw_repositories`/
+`social_mentions` tables everything else lands in — no separate schema.
+
+```bash
+powershell -ExecutionPolicy Bypass -File ops/realtime/install-realtime-services.ps1
+```
+
+Then connect to `ws://localhost:8001/live` (with the RAG API running) to see
+events as they're captured.
+
 ## Monitoring
 
 This section describes the Prometheus/Grafana stack of the legacy local cluster. On AWS, job output goes to CloudWatch Logs (30-day retention); see [infra/aws/README.md](infra/aws/README.md).
@@ -280,28 +304,6 @@ Three endpoints:
 The answer is built from SQL against the analytics models, not a similarity search — the questions people ask are aggregates, and the whole corpus is small enough that picking the right rows beats finding similar ones. The model is given those rows and told to answer from them and nothing else; every repository it cites is checked against what it was actually shown before you see it. If the data can't answer, it's supposed to say so, and there's an evaluation harness that scores whether it does.
 
 `RAG_ENABLED=0` turns answering off without touching anything else — useful if a bill starts moving. `/trending` keeps working.
-
-## Real-time ingestion
-
-npm publishes and Hacker News posts about tracked (or discoverable) projects
-show up within seconds, not the next day's batch — the only two of Hecate's
-six sources that genuinely support this without requiring a relationship
-with the source Hecate doesn't have (see `docs/specs/2026-08-14-realtime-
-ingestion-design.md` for why GitHub, GitLab, and PyPI stay batch).
-
-Two always-on Windows services (`ops/realtime/`) listen continuously and
-publish into a small, separate, always-on Redis instance (Memurai, since
-plain Redis has no first-party Windows build) — independent of the daily
-windowed cluster, which stays off most of the day exactly as before. The
-daily batch drains what was captured into the same `raw_repositories`/
-`social_mentions` tables everything else lands in — no separate schema.
-
-```bash
-powershell -ExecutionPolicy Bypass -File ops/realtime/install-realtime-services.ps1
-```
-
-Then connect to `ws://localhost:8001/live` (with the RAG API running) to see
-events as they're captured.
 
 ## Contributing
 
