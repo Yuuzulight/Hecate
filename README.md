@@ -37,9 +37,21 @@ GitHub · npm · PyPI · GitLab          Hacker News · Lobsters
        Grafana dashboards  ·  Prometheus metrics  ·  alerts
 ```
 
-## Running it
+## Deployment
 
-The daily AWS deployment runs at 04:00 Singapore time without a local machine. Deployment details, migration results, and cloud operations are in [infra/aws/README.md](infra/aws/README.md). The instructions below are for local development.
+Since 14 October 2026 production runs on AWS in **ap-southeast-2 (Sydney)**, daily at **04:00 Singapore time**, with no local machine involved. Infrastructure is Terraform (a check on 14 October found no drift). Full details, migration results and operations are in [infra/aws/README.md](infra/aws/README.md).
+
+- **Scheduler and batch:** EventBridge Scheduler starts one ECS Fargate batch. It extracts, runs dbt (models and tests), refreshes embeddings, launches the forecast task and waits for it, then writes a PostgreSQL backup to a private S3 bucket. Sundays add the dbt full refresh in the same job.
+- **Warehouse:** Aurora PostgreSQL Express.
+- **Embeddings:** Valkey Serverless, with IAM authentication and TLS.
+- **Forecasting:** an on-demand Fargate task runs TimesFM; it is started by the daily batch and is not an always-on service.
+- **API:** Lambda and API Gateway serve the RAG, trends and forecast API behind Cognito. Only `/`, `/health` and `/auth-config` are public.
+
+Cloud warehouse as of 14 October 2026: 2,360 repositories, 65 snapshot days and 5,675 mentions. The live forecast run produced 100 forecast rows across 50 repositories; 20 repositories were suppressed for insufficient history.
+
+The old Windows scheduled tasks are disabled and the local data is kept for rollback. The Docker Desktop Kubernetes setup is described under [Legacy local setup](#legacy-local-setup-kept-as-rollback).
+
+## Running it locally
 
 You need Docker and Python 3.11 or newer.
 
@@ -83,8 +95,9 @@ pipeline/
   server.py       metrics endpoint
   main.py         wires it together
 dbt/models/       staging views, then facts and dimensions
-k8s/              namespace, database, the five scheduled jobs
-k8s/monitoring/   Prometheus, Alertmanager, Grafana
+infra/aws/        Terraform and batch/API code for the AWS deployment
+k8s/              legacy local cluster: namespace, database, the five scheduled jobs
+k8s/monitoring/   legacy local cluster: Prometheus, Alertmanager, Grafana
 ops/              scheduled task prompts
 tools/            one-off measurement scripts
 tests/
@@ -148,7 +161,11 @@ HECATE_INTEGRATION=1 pytest
 
 That flag is deliberate. If the tests simply skipped whenever the connection failed, a suite pointed at the wrong database would report green having tested nothing. With it set, a database that won't accept the connection is a failure.
 
-## On Kubernetes
+## Legacy local setup (kept as rollback)
+
+This is how Hecate ran before the move to AWS on 14 October 2026. It is no longer the production path; it is kept so the project can be run, or rolled back to, on a local machine. Everything below, including the schedule, the suspended CronJobs and the Windows services, describes that local setup.
+
+### On Kubernetes
 
 Any cluster will do. These instructions assume Docker Desktop's, which is the fiddliest.
 
@@ -214,6 +231,8 @@ kubectl patch cronjob hecate-daily -n hecate -p '{"spec":{"suspend":false}}'
 
 ## Monitoring
 
+This section describes the Prometheus/Grafana stack of the legacy local cluster. On AWS, job output goes to CloudWatch Logs (30-day retention); see [infra/aws/README.md](infra/aws/README.md).
+
 The exporter serves Prometheus metrics on port 8000.
 
 | metric | what it tells you |
@@ -244,7 +263,11 @@ python -m pipeline.rag.api      # serves on http://localhost:8001
 
 Then open `http://localhost:8001` and type a question. You'll get an answer, how confident the model was, the repositories it drew on as links you can follow, and how long it took.
 
-**It needs an API key for whichever provider is configured.** `RAG_PROVIDER` defaults to `gemini` — put `GOOGLE_API_KEY=...` in your `.env`, free via Google AI Studio. Set `RAG_PROVIDER=anthropic` or `RAG_PROVIDER=openai` and the matching key instead if you'd rather use one of those. Without a key for whichever provider is configured, the service still starts and `/trending` still works, but asking a question returns an error saying what's missing. Gemini's free tier costs nothing at this project's scale and removes the need for Anthropic credits specifically; Anthropic and OpenAI are billed per question — a few cents a day at any sane rate of asking, and there's an alert if it isn't (see the Monitoring section above — Gemini gets its own separate token-based alert, since the dollar one can't see its spend at all). Deployment and provider-selection wiring is confirmed working on all three — env vars, auth, request routing. Whether a given provider actually returns an answer still depends on that provider's own account having available credits or quota: a Google Cloud project with billing enabled can hit its own quota limits independently of anything in this code, which is exactly what happened during live verification (billing-side `429 RESOURCE_EXHAUSTED`, not a code defect). `RAG_PROVIDER=anthropic` is the one with real, end-to-end verification: a full pass of the evaluation harness against the live warehouse scored 0.92 mean faithfulness and zero hallucinations across the fixed question set — a real answer, judged by a real second model call, not just a response coming back.
+**Which model answers depends on where it runs.** The production API on AWS uses OpenAI `gpt-5-mini` with minimal reasoning, behind a shared guardrail of 50 questions per UTC day (the counter resets at 08:00 Singapore time), 2 requests per second with a burst of 5, and a 500-character question limit. That is a usage limit, not a monetary hard cap; scheduled embedding and forecast jobs do not count against it. The local service can use Gemini, Anthropic or OpenAI, with Gemini as the local default.
+
+**Evaluation caveat.** The only full faithfulness evaluation (0.92 mean faithfulness, zero hallucinations, 12 fixed questions, 14 August 2026) was run with **Anthropic**. The OpenAI `gpt-5-mini` path that production uses has not been separately evaluated.
+
+**Locally, it needs an API key for whichever provider is configured.** `RAG_PROVIDER` defaults to `gemini` — put `GOOGLE_API_KEY=...` in your `.env`, free via Google AI Studio. Set `RAG_PROVIDER=anthropic` or `RAG_PROVIDER=openai` and the matching key instead if you'd rather use one of those. Without a key for whichever provider is configured, the service still starts and `/trending` still works, but asking a question returns an error saying what's missing. Gemini's free tier costs nothing at this project's scale and removes the need for Anthropic credits specifically; Anthropic and OpenAI are billed per question — a few cents a day at any sane rate of asking, and there's an alert if it isn't (see the Monitoring section above — Gemini gets its own separate token-based alert, since the dollar one can't see its spend at all). Deployment and provider-selection wiring is confirmed working on all three — env vars, auth, request routing. Whether a given provider actually returns an answer still depends on that provider's own account having available credits or quota: a Google Cloud project with billing enabled can hit its own quota limits independently of anything in this code, which is exactly what happened during live verification (billing-side `429 RESOURCE_EXHAUSTED`, not a code defect). `RAG_PROVIDER=anthropic` is the one with real, end-to-end verification: a full pass of the evaluation harness against the live warehouse scored 0.92 mean faithfulness and zero hallucinations across the fixed question set — a real answer, judged by a real second model call, not just a response coming back.
 
 Three endpoints:
 
@@ -290,7 +313,9 @@ Two conventions. Nulls are meaningful: if a source doesn't report a field it sta
 
 ## Status
 
-Running. All six sources collect, the models build, and the whole thing runs unattended on a schedule with alerting and nightly backups. The question-answering service on top of it is built and deployed, provider-selectable between Gemini, Anthropic, and OpenAI — deployment wiring for all three is verified working, and `RAG_PROVIDER=anthropic` has cleared the higher bar of a full evaluation run against real production data: 0.92 mean faithfulness, zero hallucinations, across the fixed question set. Getting an actual answer back on any provider still depends on that account having credits or quota available, which is a property of the account, not of this deployment.
+Running in production on AWS (Sydney) since 14 October 2026. All six sources collect, the models build, and the whole thing runs unattended daily with nightly backups to S3. The question-answering service is deployed behind Cognito and uses OpenAI `gpt-5-mini`; it is provider-selectable between Gemini, Anthropic and OpenAI when run locally. The only full evaluation (0.92 mean faithfulness, zero hallucinations, 12 questions, 14 August 2026) used Anthropic, so the production model has not been evaluated separately. Getting an actual answer back on any provider still depends on that account having credits or quota available, which is a property of the account, not of this deployment.
+
+The forecast image is not built by CI (`build.yml` has no forecast target), so it is not published automatically on a release; `infra/aws/Dockerfile.forecast` is the AWS forecast image's Dockerfile.
 
 Momentum needs about a week of snapshot history before it means much — with fewer days than that, the growth windows are correctly null and the ranking leans on attention alone. That resolves itself rather than needing a change.
 
@@ -298,7 +323,7 @@ Known limits are listed at the end of `ARCHITECTURE.md`. The honest short versio
 
 ## Stack
 
-Python 3.11, PostgreSQL 15, dbt, Docker, Kubernetes, Prometheus, Alertmanager, Grafana, Redis, FastAPI, LangChain, Gemini/Claude/GPT (provider-selectable).
+Python 3.11, PostgreSQL 15 (Aurora on AWS), dbt, Docker, Terraform, AWS (ECS Fargate, EventBridge Scheduler, Lambda, API Gateway, Cognito, S3, Valkey Serverless), Kubernetes, Prometheus, Alertmanager, Grafana, Redis, FastAPI, LangChain, Gemini/Claude/GPT (provider-selectable).
 
 ## Licence
 
