@@ -13,9 +13,9 @@ Star counts alone don't tell you much. A repo with 60k stars that hasn't taken a
 
 ## Latest snapshot
 
-![Hecate weekly growth](https://HECATE-PUBLIC-BUCKET.s3.ap-southeast-2.amazonaws.com/snapshot/weekly-growth.svg)
+![Hecate weekly growth](https://hecate-prod-public-20261019171449803900000001.s3.ap-southeast-2.amazonaws.com/snapshot/weekly-growth.svg)
 
-Published by the daily AWS batch from the warehouse's public-repository statistics; GitHub caches the image, so it can be hours behind. Counts are in [`summary.json`](https://HECATE-PUBLIC-BUCKET.s3.ap-southeast-2.amazonaws.com/snapshot/summary.json).
+Published by the daily AWS batch from the warehouse's public-repository statistics; GitHub caches the image, so it can be hours behind. Counts are in [`summary.json`](https://hecate-prod-public-20261019171449803900000001.s3.ap-southeast-2.amazonaws.com/snapshot/summary.json).
 
 ## How it works
 
