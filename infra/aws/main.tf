@@ -412,6 +412,7 @@ module "daily_task" {
     { name = "VALKEY_NAME", value = local.valkey_name },
     { name = "ENABLE_EMBEDDINGS", value = "1" },
     { name = "ENABLE_FORECAST", value = "1" },
+    { name = "HECATE_PUBLIC_BUCKET", value = aws_s3_bucket.public.bucket },
     { name = "ECS_CLUSTER", value = aws_ecs_cluster.main.arn },
     { name = "FORECAST_TASK", value = aws_ecs_task_definition.forecast.arn },
     { name = "FORECAST_NETWORK", value = jsonencode({ awsvpcConfiguration = { subnets = aws_subnet.public[*].id, securityGroups = [aws_security_group.ecs.id], assignPublicIp = "ENABLED" } }) }

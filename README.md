@@ -11,6 +11,12 @@ The kind of questions it's meant to answer:
 
 Star counts alone don't tell you much. A repo with 60k stars that hasn't taken a commit in three years is a different thing from one with 8k stars and weekly releases, and download numbers say more about real use than either. Discussion says something different again, and earlier: it moves before the stars do.
 
+## Latest snapshot
+
+![Hecate weekly growth](https://HECATE-PUBLIC-BUCKET.s3.ap-southeast-2.amazonaws.com/snapshot/weekly-growth.svg)
+
+Published by the daily AWS batch from the warehouse's public-repository statistics; GitHub caches the image, so it can be hours behind. Counts are in [`summary.json`](https://HECATE-PUBLIC-BUCKET.s3.ap-southeast-2.amazonaws.com/snapshot/summary.json).
+
 ## How it works
 
 Four sources supply projects: GitHub, npm, PyPI and GitLab. Two more supply conversation about them: Hacker News and Lobsters. Everything is normalised to one schema, then loaded into PostgreSQL idempotently, so a run that dies partway through can just be run again.

@@ -14,14 +14,14 @@ import boto3
 import psycopg2
 
 
-def run_command(command, env=None):
+def run_command(command, env=None, timeout=7200):
     if env is not None and env.get("DB_AUTH_MODE") == "iam":
         token = boto3.client("rds").generate_db_auth_token(
             DBHostname=env["DB_HOST"], Port=int(env.get("DB_PORT", "5432")), DBUsername=env["DB_USER"],
         )
         env["DB_PASSWORD"] = token
         env["PGPASSWORD"] = token
-    subprocess.run(command, env=env, check=True, timeout=7200)
+    subprocess.run(command, env=env, check=True, timeout=timeout)
 
 
 def wait_for_database():
@@ -134,6 +134,12 @@ def main():
                         run_forecast(env)
                     except (RuntimeError, TimeoutError):
                         failures.append("forecast")
+                if env.get("HECATE_PUBLIC_BUCKET"):
+                    # Fail soft: the public snapshot is cosmetic and must never fail the batch.
+                    try:
+                        run_command([sys.executable, "aws_runtime.py", "aws_snapshot"], env, timeout=300)
+                    except Exception as error:
+                        print(f"Public snapshot skipped: {error}", flush=True)
                 if failures:
                     raise RuntimeError(f"Additional jobs failed: {failures}")
         finally:
