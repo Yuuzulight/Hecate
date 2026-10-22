@@ -17,6 +17,7 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 COPY requirements.txt .
+RUN pip install --user --no-cache-dir --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
 RUN pip install --user --no-cache-dir -r requirements.txt
 
 
@@ -33,6 +34,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN useradd --create-home --uid 1000 hecate
 
 USER hecate
+RUN pip install --user --no-cache-dir --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
 RUN pip install --user --no-cache-dir dbt-core==1.12.0 dbt-postgres==1.11.0
 
 WORKDIR /app
@@ -64,6 +66,7 @@ WORKDIR /app
 # - Both files, even though only one is named: requirements-rag.txt starts with
 #   `-r requirements.txt`, so the service gets psycopg2 and redis too.
 COPY --chown=hecate:hecate requirements.txt requirements-rag.txt ./
+RUN pip install --user --no-cache-dir --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
 RUN pip install --user --no-cache-dir -r requirements-rag.txt
 
 COPY --chown=hecate:hecate pipeline/ ./pipeline/
@@ -97,6 +100,7 @@ USER hecate
 WORKDIR /app
 
 COPY --chown=hecate:hecate requirements.txt requirements-forecast.txt ./
+RUN pip install --user --no-cache-dir --upgrade "pip>=26.2.2" "certifi>=2026.10.19"
 RUN pip install --user --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-forecast.txt
 
 # - Pinned to the exact revision the spike validated - see
